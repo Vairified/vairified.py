@@ -29,10 +29,10 @@ from vairified.models import (
     SearchResults,
 )
 from vairified.oauth import (
-    AuthorizationResponse,
     DEFAULT_SCOPES,
-    OAuthConfig,
     SCOPES,
+    AuthorizationResponse,
+    OAuthConfig,
     TokenResponse,
     describe_scope,
     describe_scopes,

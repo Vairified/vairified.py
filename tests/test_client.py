@@ -139,7 +139,7 @@ class TestVairified:
             updates = await client.get_rating_updates()
 
         assert len(updates) == 1
-        assert updates[0].member_id == "uuid-1"
+        assert updates[0].id == "uuid-1"
         assert updates[0].improved is True
         assert updates[0].change == pytest.approx(0.1)
 

@@ -213,7 +213,11 @@ class Player:
                 display_name=longname,
                 first_name=first_name,
                 last_name=last_name,
-                rating=float(data.get("primaryRating", 0.0)) if data.get("primaryRating") else 0.0,
+                rating=(
+                    float(data.get("primaryRating", 0.0))
+                    if data.get("primaryRating")
+                    else 0.0
+                ),
                 is_vairified=data.get("vairified", False),
                 city=data.get("city"),
                 state=data.get("state"),

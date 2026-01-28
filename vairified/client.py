@@ -14,7 +14,6 @@ import httpx
 from vairified.errors import (
     AuthenticationError,
     NotFoundError,
-    OAuthError,
     RateLimitError,
     VairifiedError,
     ValidationError,
@@ -28,10 +27,10 @@ from vairified.models import (
     SearchResults,
 )
 from vairified.oauth import (
+    DEFAULT_SCOPES,
+    SCOPES,
     AuthorizationResponse,
     TokenResponse,
-    SCOPES,
-    DEFAULT_SCOPES,
 )
 
 # Environment URLs
@@ -460,7 +459,8 @@ class Vairified:
         users should be redirected to approve access.
 
         :param redirect_uri: Your application's callback URL.
-        :param scopes: Permission scopes to request. Defaults to profile:read, rating:read.
+        :param scopes: Permission scopes to request.
+            Defaults to profile:read, rating:read.
         :param state: CSRF protection state parameter (recommended).
         :returns: AuthorizationResponse with the URL to redirect users to.
         :raises OAuthError: If the authorization fails to start.
@@ -474,7 +474,7 @@ class Vairified:
             )
             # Redirect user to auth.authorization_url
         """
-        from vairified.errors import OAuthError
+        from vairified.errors import OAuthError  # noqa: F811
 
         if scopes is None:
             scopes = list(DEFAULT_SCOPES)
@@ -558,7 +558,8 @@ class Vairified:
         without requiring the user to re-authorize.
 
         :param refresh_token: The refresh token from a previous token exchange.
-        :returns: TokenResponse with new access_token and optionally a new refresh_token.
+        :returns: TokenResponse with new access_token and optionally
+            a new refresh_token.
         :raises OAuthError: If the refresh token is invalid or revoked.
 
         Example::

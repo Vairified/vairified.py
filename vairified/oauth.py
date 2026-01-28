@@ -6,10 +6,9 @@ Utilities for implementing the "Connect with Vairified" OAuth flow.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 from urllib.parse import urlencode
-
 
 # Available OAuth scopes
 SCOPES = {
