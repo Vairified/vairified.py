@@ -377,6 +377,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 <p align="center">
   <a href="https://vairified.com">vairified.com</a> · 
-  <a href="https://docs.vairified.com">Documentation</a> · 
+  <a href="https://vairified.github.io/vairified.py">Documentation</a> · 
   <a href="mailto:support@vairified.com">Support</a>
 </p>
