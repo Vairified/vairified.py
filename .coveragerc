@@ -1,0 +1,19 @@
+[run]
+source = vairified
+branch = true
+omit =
+    tests/*
+    */__pycache__/*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise NotImplementedError
+    if TYPE_CHECKING:
+    @overload
+show_missing = true
+precision = 2
+
+[html]
+directory = htmlcov
