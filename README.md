@@ -8,7 +8,7 @@
 <p align="center">
   <a href="https://github.com/Vairified/vairified.py/actions/workflows/ci.yml"><img src="https://github.com/Vairified/vairified.py/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/version-0.1.0-green.svg" alt="Version 0.1.0">
-  <img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+">
+  <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+">
   <a href="https://pypi.org/project/vairified/"><img src="https://img.shields.io/pypi/v/vairified.svg" alt="PyPI"></a>
 </p>
 
@@ -292,37 +292,27 @@ bool(results)        # True if has players
 ```python
 from vairified import Vairified
 
-# Default (production)
+# Basic usage
 client = Vairified(api_key="vair_pk_xxx")
 
-# Use staging for testing
+# Use staging for development/testing
 client = Vairified(api_key="vair_pk_xxx", env="staging")
 
-# Custom base URL
+# Custom configuration
 client = Vairified(
     api_key="vair_pk_xxx",
-    base_url="https://custom-api.example.com/api/v1",
     timeout=30.0,
 )
 ```
-
-### Available Environments
-
-| Environment | Description |
-|-------------|-------------|
-| `production` | Live API (default) |
-| `staging` | Testing environment |
-| `local` | Local development |
 
 ### Environment Variables
 
 ```bash
 export VAIRIFIED_API_KEY="vair_pk_xxx"
-export VAIRIFIED_ENV="staging"  # Optional: production (default), staging, local
 ```
 
 ```python
-# API key and environment read from environment
+# API key read from environment
 async with Vairified() as client:
     ...
 ```
