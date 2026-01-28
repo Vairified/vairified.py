@@ -146,7 +146,4 @@ def describe_scopes(scopes: list[str]) -> list[dict[str, str]]:
     :param scopes: List of scope strings.
     :returns: List of dicts with 'scope' and 'description' keys.
     """
-    return [
-        {"scope": s, "description": describe_scope(s)}
-        for s in scopes
-    ]
+    return [{"scope": s, "description": describe_scope(s)} for s in scopes]
