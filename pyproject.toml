@@ -38,7 +38,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://vairified.com"
-Documentation = "https://vairified.py.readthedocs.io"
+Documentation = "https://vairified.github.io/vairified.py"
 Repository = "https://github.com/Vairified/vairified.py"
 Issues = "https://github.com/Vairified/vairified.py/issues"
 
