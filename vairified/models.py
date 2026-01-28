@@ -188,7 +188,7 @@ class Player:
         :param client: Vairified client for back-reference.
         :returns: Player instance.
         """
-        # New search format uses displayName
+        # Search format uses displayName
         if "displayName" in data:
             # Public search format (limited data)
             return cls(
@@ -197,28 +197,6 @@ class Player:
                 rating=float(data.get("rating", 0.0)) if data.get("rating") else 0.0,
                 is_vairified=data.get("isVairified", False),
                 is_connected=data.get("isConnected", False),
-                city=data.get("city"),
-                state=data.get("state"),
-                country=data.get("country"),
-                _client=client,
-            )
-        # Legacy search format with memberLongname
-        elif "memberLongname" in data:
-            longname = data.get("memberLongname", "")
-            parts = longname.split(" ", 1)
-            first_name = parts[0] if parts else ""
-            last_name = parts[1] if len(parts) > 1 else ""
-            return cls(
-                id=data.get("id", data.get("memberId", "")),
-                display_name=longname,
-                first_name=first_name,
-                last_name=last_name,
-                rating=(
-                    float(data.get("primaryRating", 0.0))
-                    if data.get("primaryRating")
-                    else 0.0
-                ),
-                is_vairified=data.get("vairified", False),
                 city=data.get("city"),
                 state=data.get("state"),
                 country=data.get("country"),
