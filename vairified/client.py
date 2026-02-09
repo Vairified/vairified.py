@@ -636,3 +636,164 @@ class Vairified:
             print(f"Rate limit: {usage['rateLimit']}/hour")
         """
         return await self._request("GET", "/partner/usage")
+
+    # -------------------------------------------------------------------------
+    # Leaderboard Operations
+    # -------------------------------------------------------------------------
+
+    async def get_leaderboard(
+        self,
+        *,
+        category: Optional[str] = None,
+        age_bracket: Optional[str] = None,
+        scope: Optional[str] = None,
+        state: Optional[str] = None,
+        city: Optional[str] = None,
+        club_id: Optional[str] = None,
+        gender: Optional[str] = None,
+        verified_only: bool = False,
+        min_games: Optional[int] = None,
+        limit: int = 50,
+        offset: int = 0,
+        search: Optional[str] = None,
+    ) -> dict:
+        """
+        Get leaderboard data with filtering options.
+
+        **Requires API Key Scope:** ``leaderboard:read`` or ``read``
+
+        :param category: Rating category: "doubles", "singles", "mixed" (default: doubles).
+        :param age_bracket: Age bracket: "open", "40+", "50+", "60+", "70+" (default: open).
+        :param scope: Geographic scope: "global", "state", "city", "club" (default: global).
+        :param state: State code (required if scope is "state").
+        :param city: City name (required if scope is "city").
+        :param club_id: Club ID (required if scope is "club").
+        :param gender: Filter by gender: "male", "female".
+        :param verified_only: Only show VAIRified players.
+        :param min_games: Minimum games to appear (default: 10).
+        :param limit: Results per page (default: 50, max: 100).
+        :param offset: Pagination offset.
+        :param search: Search by player name.
+        :returns: Dict with players, stats, filters, and pagination.
+
+        Example::
+
+            # Get global doubles leaderboard
+            leaderboard = await client.get_leaderboard()
+
+            # Get state-level singles leaderboard
+            tx_leaderboard = await client.get_leaderboard(
+                category="singles",
+                scope="state",
+                state="TX",
+            )
+
+            # Get 50+ age bracket
+            senior_leaderboard = await client.get_leaderboard(
+                age_bracket="50+",
+                verified_only=True,
+            )
+
+            for player in leaderboard["players"]:
+                print(f"#{player['rank']} {player['displayName']}: {player['rating']}")
+        """
+        params: dict[str, Any] = {"limit": limit, "offset": offset}
+
+        if category:
+            params["category"] = category
+        if age_bracket:
+            params["ageBracket"] = age_bracket
+        if scope:
+            params["scope"] = scope
+        if state:
+            params["state"] = state
+        if city:
+            params["city"] = city
+        if club_id:
+            params["clubId"] = club_id
+        if gender:
+            params["gender"] = gender
+        if verified_only:
+            params["verifiedOnly"] = True
+        if min_games is not None:
+            params["minGames"] = min_games
+        if search:
+            params["search"] = search
+
+        return await self._request("GET", "/leaderboard", params=params)
+
+    async def get_player_rank(
+        self,
+        player_id: str,
+        *,
+        category: str = "doubles",
+        age_bracket: str = "open",
+        scope: str = "global",
+        state: Optional[str] = None,
+        city: Optional[str] = None,
+        club_id: Optional[str] = None,
+        context_size: int = 5,
+    ) -> dict:
+        """
+        Get a specific player's rank on the leaderboard.
+
+        **Requires API Key Scope:** ``leaderboard:read`` or ``read``
+
+        :param player_id: External player ID (vair_mem_xxx format).
+        :param category: Rating category (default: "doubles").
+        :param age_bracket: Age bracket (default: "open").
+        :param scope: Geographic scope (default: "global").
+        :param state: State code for state scope.
+        :param city: City name for city scope.
+        :param club_id: Club ID for club scope.
+        :param context_size: Number of nearby players to include (default: 5).
+        :returns: Dict with rank, percentile, and nearby players.
+
+        Example::
+
+            rank = await client.get_player_rank(
+                "vair_mem_xxx",
+                category="doubles",
+                context_size=5,
+            )
+
+            print(f"Rank: #{rank['rank']} (top {rank['percentile']}%)")
+            print(f"Points to next rank: {rank.get('pointsToNextRank')}")
+
+            # Show nearby players
+            for nearby in rank["nearbyPlayers"]:
+                print(f"#{nearby['rank']} {nearby['displayName']}")
+        """
+        body = {
+            "playerId": player_id,
+            "category": category,
+            "ageBracket": age_bracket,
+            "scope": scope,
+            "contextSize": context_size,
+        }
+
+        if state:
+            body["state"] = state
+        if city:
+            body["city"] = city
+        if club_id:
+            body["clubId"] = club_id
+
+        return await self._request("POST", "/leaderboard/rank", json=body)
+
+    async def get_leaderboard_categories(self) -> dict:
+        """
+        Get available leaderboard categories and brackets.
+
+        **Requires API Key Scope:** ``leaderboard:read`` or ``read``
+
+        :returns: Dict with categories, ageBrackets, and scopes.
+
+        Example::
+
+            categories = await client.get_leaderboard_categories()
+
+            print("Categories:", [c["name"] for c in categories["categories"]])
+            print("Age Brackets:", [b["name"] for b in categories["ageBrackets"]])
+        """
+        return await self._request("GET", "/leaderboard/categories")

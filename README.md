@@ -113,6 +113,44 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     await client.submit_match(singles)
 ```
 
+### Leaderboard
+
+```python
+async with Vairified(api_key="vair_pk_xxx") as client:
+    # Get global doubles leaderboard
+    leaderboard = await client.get_leaderboard()
+
+    # Get state-level singles leaderboard
+    tx_leaderboard = await client.get_leaderboard(
+        category="singles",
+        scope="state",
+        state="TX",
+        limit=50,
+    )
+
+    # Get 50+ age bracket with verified players only
+    senior_leaderboard = await client.get_leaderboard(
+        age_bracket="50+",
+        verified_only=True,
+    )
+
+    # Display results
+    for player in leaderboard["players"]:
+        print(f"#{player['rank']} {player['displayName']}: {player['rating']}")
+
+    # Get a specific player's rank
+    rank = await client.get_player_rank(
+        "vair_mem_xxx",
+        category="doubles",
+        context_size=5,
+    )
+    print(f"Rank: #{rank['rank']} (top {rank['percentile']:.1f}%)")
+
+    # Get available categories
+    categories = await client.get_leaderboard_categories()
+    print("Categories:", [c["name"] for c in categories["categories"]])
+```
+
 ### Get Rating Updates
 
 ```python
@@ -316,6 +354,26 @@ export VAIRIFIED_API_KEY="vair_pk_xxx"
 async with Vairified() as client:
     ...
 ```
+
+## API Key Scopes
+
+Your API key determines which endpoints you can access. The scope system uses a hierarchy:
+
+```
+admin → write → read → granular scopes
+```
+
+| Scope | Access |
+|-------|--------|
+| `admin` | Full access to all endpoints |
+| `write` | All read + write operations |
+| `read` | All read operations (search, leaderboard, member) |
+| `leaderboard:read` | Leaderboard endpoints only |
+| `player:search` | Player search only |
+| `member:read` | Connected member data only |
+| `match:submit` | Submit match results |
+| `tournament:import` | Import tournament data |
+| `dry-run` | Validate writes without persisting |
 
 ## Dry-Run Mode (Dev Keys)
 
