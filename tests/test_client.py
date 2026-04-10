@@ -1,152 +1,360 @@
-"""Tests for Vairified client."""
+"""Tests for the Vairified SDK — Partner API v1 shape."""
 
-from datetime import datetime
+from __future__ import annotations
+
+import os
+from typing import Any
 
 import pytest
 import respx
 from httpx import Response
 
-from vairified import Match, Player, RateLimitError, Vairified, VairifiedError
+from vairified import (
+    AuthenticationError,
+    Game,
+    Gender,
+    Match,
+    MatchBatch,
+    Member,
+    NotFoundError,
+    RateLimitError,
+    RatingUpdate,
+    SportRating,
+    Vairified,
+    VairifiedError,
+)
+
+# ---------------------------------------------------------------------------
+# Fixtures — realistic API payloads
+# ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def api_key():
-    return "vair_pk_test123456789"
+def _member_payload(**overrides: Any) -> dict[str, Any]:
+    """Build a realistic PartnerMember response body."""
+    payload: dict[str, Any] = {
+        "memberId": 4873327,
+        "id": "0196a2e9-7b11-7f8c-bb3b-5f3d3e8fb4a2",
+        "firstName": "Mike",
+        "lastName": "Barker",
+        "fullName": "Mike Barker",
+        "displayName": "Mike B.",
+        "age": 42,
+        "city": "Austin",
+        "state": "TX",
+        "zip": "78701",
+        "country": "US",
+        "gender": "MALE",
+        "status": {
+            "isVairified": True,
+            "isWheelchair": False,
+            "isAmbassador": False,
+            "isRater": False,
+            "isConnected": True,
+        },
+        "sport": {
+            "pickleball": {
+                "rating": 3.915,
+                "abbr": "VO",
+                "ratingSplits": {
+                    "overall-open": {"rating": 3.915, "abbr": "VO"},
+                    "gender-open": {"rating": 3.880, "abbr": "VG"},
+                    "singles-open": {"rating": 3.710, "abbr": "S"},
+                },
+            },
+        },
+        "activeLeagues": ["Austin Pickleball Club"],
+    }
+    payload.update(overrides)
+    return payload
 
 
-@pytest.fixture
-def base_url():
-    return "https://api-next.vairified.com/api/v1"
+# ---------------------------------------------------------------------------
+# Client construction
+# ---------------------------------------------------------------------------
 
 
-class TestVairified:
-    """Tests for the Vairified client."""
+class TestClientConstruction:
+    def test_requires_api_key(self):
+        os.environ.pop("VAIRIFIED_API_KEY", None)
+        with pytest.raises(ValueError, match="API key required"):
+            Vairified()
 
+    def test_env_from_kwarg(self, api_key):
+        client = Vairified(api_key=api_key, env="staging")
+        assert client.env == "staging"
+        assert "staging" in client.base_url
+
+    def test_unknown_env_rejected(self, api_key):
+        with pytest.raises(ValueError, match="Unknown environment"):
+            Vairified(api_key=api_key, env="mars")
+
+    def test_base_url_overrides_env(self, api_key):
+        client = Vairified(
+            api_key=api_key,
+            base_url="http://localhost:3001/api/v1",
+        )
+        assert client.base_url == "http://localhost:3001/api/v1"
+
+    def test_has_sub_resources(self, api_key):
+        client = Vairified(api_key=api_key, env="production")
+        assert client.members is not None
+        assert client.matches is not None
+        assert client.oauth is not None
+        assert client.leaderboard is not None
+
+
+# ---------------------------------------------------------------------------
+# MembersResource
+# ---------------------------------------------------------------------------
+
+
+class TestMembersResource:
     @respx.mock
     @pytest.mark.asyncio
     async def test_get_member(self, api_key, base_url):
-        """Test getting a member by ID."""
         respx.get(f"{base_url}/partner/member").mock(
-            return_value=Response(
-                200,
-                json={
-                    "id": "uuid-123",
-                    "firstName": "John",
-                    "lastName": "Doe",
-                    "rating": 4.25,
-                    "isVairified": True,
-                    "ratingSplits": {"VG": 4.25, "VO": 4.10},
-                },
-            )
+            return_value=Response(200, json=_member_payload())
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
-            member = await client.get_member("clerk_user_123")
+            member = await client.members.get("vair_mem_xxx")
 
-        assert member.id == "uuid-123"
-        assert member.name == "John Doe"
-        assert member.rating == 4.25
-        assert member.is_vairified is True
-        assert member.rating_splits.gender == 4.25  # VG maps to gender
+        assert member.member_id == 4873327
+        assert member.name == "Mike Barker"
+        assert member.display_name == "Mike B."
+        assert member.gender is Gender.MALE
+        assert member.status.is_vairified is True
+        assert member.sports == ["pickleball"]
+        assert member.rating_for("pickleball") == pytest.approx(3.915)
+        assert member.rating_for("padel") is None
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_search(self, api_key, base_url):
-        """Test searching for players."""
+    async def test_get_member_sport_filter(self, api_key, base_url):
+        route = respx.get(f"{base_url}/partner/member").mock(
+            return_value=Response(200, json=_member_payload())
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.members.get("vair_mem_xxx", sport="pickleball")
+
+        assert route.called
+        assert route.calls.last.request.url.params["sport"] == "pickleball"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_get_member_multiple_sports(self, api_key, base_url):
+        route = respx.get(f"{base_url}/partner/member").mock(
+            return_value=Response(200, json=_member_payload())
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.members.get(
+                "vair_mem_xxx", sport=["pickleball", "padel"]
+            )
+
+        assert route.calls.last.request.url.params["sport"] == "pickleball,padel"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_search_auto_paginates(self, api_key, base_url):
+        # First page: 2 results (page_size), second page: 1 result (short).
+        page_1 = [_member_payload(memberId=1), _member_payload(memberId=2)]
+        page_2 = [_member_payload(memberId=3)]
+        responses = [
+            Response(200, json=page_1),
+            Response(200, json=page_2),
+        ]
+        respx.get(f"{base_url}/partner/search").mock(side_effect=responses)
+
+        collected: list[int] = []
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            async for m in client.members.search(city="Austin", page_size=2):
+                collected.append(m.member_id)
+
+        assert collected == [1, 2, 3]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_search_max_results_caps(self, api_key, base_url):
         respx.get(f"{base_url}/partner/search").mock(
             return_value=Response(
                 200,
-                json={
-                    "players": [
-                        {
-                            "id": "uuid-1",
-                            "firstName": "Jane",
-                            "lastName": "Smith",
-                            "city": "Austin",
-                            "state": "TX",
-                            "rating": 4.0,
-                            "isVairified": True,
-                            "ratingSplits": {},
-                        }
-                    ],
-                    "total": 1,
-                    "page": 1,
-                    "limit": 20,
-                },
+                json=[
+                    _member_payload(memberId=1),
+                    _member_payload(memberId=2),
+                    _member_payload(memberId=3),
+                ],
             )
         )
 
+        collected: list[int] = []
         async with Vairified(api_key=api_key, base_url=base_url) as client:
-            results = await client.search(city="Austin", state="TX")
+            async for m in client.members.search(name="Mike", max_results=2):
+                collected.append(m.member_id)
 
-        assert len(results) == 1
-        assert results[0].name == "Jane Smith"
-        assert results[0].city == "Austin"
-        assert results.total == 1
+        assert collected == [1, 2]
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_submit_match(self, api_key, base_url):
-        """Test submitting a match."""
-        respx.post(f"{base_url}/partner/matches").mock(
-            return_value=Response(
-                200,
-                json={
-                    "success": True,
-                    "message": "1 match submitted, 2 games recorded",
-                    "numMatches": 1,
-                    "numGames": 2,
-                },
-            )
+    async def test_find_returns_first(self, api_key, base_url):
+        respx.get(f"{base_url}/partner/search").mock(
+            return_value=Response(200, json=[_member_payload(memberId=42)])
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
-            match = Match(
-                event="Test League",
-                bracket="4.0 Doubles",
-                date=datetime.now(),
-                team1=("p1", "p2"),
-                team2=("p3", "p4"),
-                scores=[(11, 9), (11, 7)],
-            )
-            result = await client.submit_match(match)
+            member = await client.members.find("Mike")
 
-        assert result.success is True
-        assert result.num_matches == 1
-        assert result.num_games == 2
+        assert member is not None
+        assert member.member_id == 42
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_get_rating_updates(self, api_key, base_url):
-        """Test getting rating updates."""
+    async def test_find_none(self, api_key, base_url):
+        respx.get(f"{base_url}/partner/search").mock(
+            return_value=Response(200, json=[])
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            member = await client.members.find("Nobody")
+
+        assert member is None
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_rating_updates(self, api_key, base_url):
         respx.get(f"{base_url}/partner/rating-updates").mock(
             return_value=Response(
                 200,
                 json={
                     "updates": [
                         {
-                            "memberId": "uuid-1",
-                            "previousRating": 4.0,
-                            "newRating": 4.1,
-                            "changedAt": "2026-01-21T12:00:00Z",
-                        }
+                            "memberId": 4873327,
+                            "displayName": "Mike B.",
+                            "sport": "pickleball",
+                            "previousRating": 3.800,
+                            "newRating": 3.915,
+                            "changedAt": "2026-04-10T12:00:00Z",
+                        },
+                        {
+                            "memberId": 999,
+                            "sport": "pickleball",
+                            "previousRating": 4.200,
+                            "newRating": 4.150,
+                            "changedAt": "2026-04-10T12:30:00Z",
+                        },
                     ]
                 },
             )
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
-            updates = await client.get_rating_updates()
+            updates = await client.members.rating_updates()
 
-        assert len(updates) == 1
-        assert updates[0].id == "uuid-1"
+        assert len(updates) == 2
         assert updates[0].improved is True
-        assert updates[0].change == pytest.approx(0.1)
+        assert updates[0].delta == pytest.approx(0.115)
+        assert updates[1].improved is False
+        assert updates[1].delta == pytest.approx(-0.05)
+
+
+# ---------------------------------------------------------------------------
+# MatchesResource
+# ---------------------------------------------------------------------------
+
+
+class TestMatchesResource:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_submit_batch(self, api_key, base_url):
+        route = respx.post(f"{base_url}/partner/matches").mock(
+            return_value=Response(
+                200,
+                json={
+                    "success": True,
+                    "numMatches": 1,
+                    "numGames": 2,
+                    "message": "Submitted",
+                },
+            )
+        )
+
+        batch = MatchBatch(
+            sport="pickleball",
+            win_score=11,
+            win_by=2,
+            bracket="4.0 Doubles",
+            event="Weekly League",
+            match_date="2026-04-11T14:00:00Z",
+            matches=[
+                Match(
+                    identifier="m1",
+                    teams=[["p1", "p2"], ["p3", "p4"]],
+                    games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
+                )
+            ],
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.matches.submit(batch)
+
+        assert result.ok is True
+        assert result.num_matches == 1
+        assert result.num_games == 2
+
+        # Verify the request body was serialized with camelCase aliases.
+        sent = route.calls.last.request.content
+        assert b"winScore" in sent
+        assert b"winBy" in sent
+        assert b"matchDate" in sent
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_rate_limit_error(self, api_key, base_url):
-        """Test rate limit handling."""
+    async def test_submit_batch_n_team_n_game(self, api_key, base_url):
+        """n-team × n-game batch — 3-team round robin, best-of-5."""
+        respx.post(f"{base_url}/partner/matches").mock(
+            return_value=Response(
+                200,
+                json={"success": True, "numMatches": 1, "numGames": 5},
+            )
+        )
+
+        batch = MatchBatch(
+            sport="pickleball",
+            win_score=15,
+            win_by=2,
+            matches=[
+                Match(
+                    identifier="round-robin-1",
+                    teams=[["a"], ["b"], ["c"]],
+                    games=[
+                        Game(scores=[15, 10, 8]),
+                        Game(scores=[12, 15, 9]),
+                        Game(scores=[15, 11, 13]),
+                        Game(scores=[14, 15, 10]),
+                        Game(scores=[15, 12, 11]),
+                    ],
+                ),
+            ],
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.matches.submit(batch)
+
+        assert result.ok is True
+        assert batch.matches[0].num_teams == 3
+        assert batch.matches[0].num_games == 5
+
+
+# ---------------------------------------------------------------------------
+# Error mapping
+# ---------------------------------------------------------------------------
+
+
+class TestErrorMapping:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_rate_limit(self, api_key, base_url):
         respx.get(f"{base_url}/partner/member").mock(
             return_value=Response(
                 429,
@@ -157,108 +365,127 @@ class TestVairified:
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             with pytest.raises(RateLimitError) as exc_info:
-                await client.get_member("user_123")
+                await client.members.get("vair_mem_xxx")
 
         assert exc_info.value.retry_after == 60
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_api_error(self, api_key, base_url):
-        """Test generic API error handling."""
+    async def test_not_found(self, api_key, base_url):
         respx.get(f"{base_url}/partner/member").mock(
-            return_value=Response(500, json={"message": "Internal server error"})
+            return_value=Response(404, json={"message": "Not found"})
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(NotFoundError):
+                await client.members.get("vair_mem_nope")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_auth_error(self, api_key, base_url):
+        respx.get(f"{base_url}/partner/member").mock(
+            return_value=Response(401, json={"message": "Invalid API key"})
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(AuthenticationError):
+                await client.members.get("vair_mem_xxx")
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_generic_error(self, api_key, base_url):
+        respx.get(f"{base_url}/partner/member").mock(
+            return_value=Response(500, json={"message": "Internal error"})
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             with pytest.raises(VairifiedError) as exc_info:
-                await client.get_member("user_123")
+                await client.members.get("vair_mem_xxx")
 
         assert exc_info.value.status_code == 500
 
 
+# ---------------------------------------------------------------------------
+# Model construction / properties
+# ---------------------------------------------------------------------------
+
+
 class TestModels:
-    """Tests for model classes."""
+    def test_member_from_payload(self):
+        member = Member.model_validate(_member_payload())
 
-    def test_player_from_dict(self):
-        """Test creating Player from dict."""
-        data = {
-            "id": "uuid-1",
-            "firstName": "John",
-            "lastName": "Doe",
-            "rating": 4.25,
-            "isVairified": True,
-            "city": "Austin",
-            "state": "TX",
-            "ratingSplits": {"VG": 4.25, "VM": 4.1},
-        }
+        assert member.member_id == 4873327
+        assert member.name == "Mike Barker"
+        assert member.gender is Gender.MALE
+        assert member.status.is_vairified is True
 
-        player = Player.from_dict(data)
+        # Sport-keyed access
+        pb = member.sport["pickleball"]
+        assert isinstance(pb, SportRating)
+        assert pb.rating == pytest.approx(3.915)
+        assert pb.abbr == "VO"
 
-        assert player.id == "uuid-1"
-        assert player.name == "John Doe"
-        assert player.rating == 4.25
-        assert player.is_vairified is True
-        assert player.rating_splits.gender == 4.25  # VG maps to gender
-        assert player.rating_splits.mixed == 4.1  # VM maps to mixed
-        assert player.verified_rating == 4.25
+        # SportRating is dict-like
+        assert len(pb) == 3
+        assert "overall-open" in pb
+        assert pb["overall-open"].rating == pytest.approx(3.915)
+        assert pb.get("missing") is None
+        assert set(pb.keys()) == {"overall-open", "gender-open", "singles-open"}
 
-    def test_match_properties(self):
-        """Test Match computed properties."""
-        match = Match(
-            event="Test",
-            bracket="4.0 Doubles",
-            date=datetime.now(),
-            team1=("p1", "p2"),
-            team2=("p3", "p4"),
-            scores=[(11, 9), (9, 11), (11, 7)],
+        # Convenience helpers
+        assert member.rating_for("pickleball") == pytest.approx(3.915)
+        split = member.split("singles-open")
+        assert split is not None
+        assert split.rating == pytest.approx(3.710)
+
+    def test_member_is_immutable(self):
+        member = Member.model_validate(_member_payload())
+        with pytest.raises((TypeError, ValueError)):
+            member.first_name = "Changed"  # type: ignore[misc]
+
+    def test_member_tolerates_extra_fields(self):
+        payload = _member_payload(someFutureField="value")
+        # Should not raise — extra="allow" on response config.
+        member = Member.model_validate(payload)
+        assert member.member_id == 4873327
+
+    def test_match_batch_serializes_camelcase(self):
+        batch = MatchBatch(
+            sport="pickleball",
+            win_score=11,
+            win_by=2,
+            match_date="2026-04-11T14:00:00Z",
+            matches=[
+                Match(
+                    identifier="m1",
+                    teams=[["a", "b"], ["c", "d"]],
+                    games=[Game(scores=[11, 9])],
+                )
+            ],
         )
 
-        assert match.format == "DOUBLES"
-        assert match.winner == 1
-        assert match.score_summary == "11-9, 9-11, 11-7"
+        data = batch.model_dump(by_alias=True, exclude_none=True)
+        assert data["winScore"] == 11
+        assert data["winBy"] == 2
+        assert data["matchDate"] == "2026-04-11T14:00:00Z"
+        assert data["matches"][0]["teams"] == [["a", "b"], ["c", "d"]]
+        assert "win_score" not in data  # snake_case should be aliased out
 
-    def test_match_singles(self):
-        """Test singles match format."""
-        match = Match(
-            event="Singles Tourney",
-            bracket="Open Singles",
-            date=datetime.now(),
-            team1=("p1",),
-            team2=("p2",),
-            scores=[(11, 8), (11, 6)],
+    def test_rating_update_delta_property(self):
+        update = RatingUpdate.model_validate(
+            {
+                "memberId": 1,
+                "previousRating": 4.0,
+                "newRating": 4.1,
+                "changedAt": "2026-04-10T12:00:00Z",
+            }
         )
+        assert update.delta == pytest.approx(0.1)
+        assert update.improved is True
 
-        assert match.format == "SINGLES"
-        assert match.winner == 1
-
-    def test_match_to_dict(self):
-        """Test Match serialization."""
-        now = datetime(2026, 1, 21, 12, 0, 0)
-        match = Match(
-            event="Test League",
-            bracket="4.0 Doubles",
-            date=now,
-            team1=("p1", "p2"),
-            team2=("p3", "p4"),
-            scores=[(11, 9)],
+    def test_rating_update_delta_none_when_missing(self):
+        update = RatingUpdate.model_validate(
+            {"memberId": 1, "changedAt": "2026-04-10T12:00:00Z"}
         )
-
-        data = match.to_dict()
-
-        assert data["event"] == "Test League"
-        assert data["bracket"] == "4.0 Doubles"
-        assert data["format"] == "DOUBLES"
-        assert data["teamA"]["player1"] == "p1"
-        assert data["teamA"]["player2"] == "p2"
-        assert data["teamA"]["game1"] == 11
-        assert data["teamB"]["game1"] == 9
-
-
-def test_missing_api_key():
-    """Test error when API key is missing."""
-    import os
-
-    os.environ.pop("VAIRIFIED_API_KEY", None)
-
-    with pytest.raises(ValueError, match="API key required"):
-        Vairified()
+        assert update.delta is None
+        assert update.improved is False

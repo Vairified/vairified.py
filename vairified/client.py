@@ -1,13 +1,51 @@
 """
-Vairified SDK Client
+Vairified SDK Client — async-first, sub-resource organized.
 
-Async-first client for the Vairified Partner API.
+Usage::
+
+    async with Vairified(api_key="vair_pk_xxx") as client:
+        # Get a connected member
+        member = await client.members.get("vair_mem_xxx")
+        print(member.display_name, member.rating_for("pickleball"))
+
+        # Auto-paginate a search
+        async for member in client.members.search(city="Austin", rating_min=4.0):
+            print(member.display_name)
+
+        # Submit a bulk match batch
+        result = await client.matches.submit(
+            MatchBatch(
+                sport="pickleball",
+                win_score=11,
+                win_by=2,
+                bracket="4.0 Doubles",
+                event="Weekly League",
+                match_date="2026-04-11T14:00:00Z",
+                matches=[
+                    Match(
+                        identifier="m1",
+                        teams=[["p1", "p2"], ["p3", "p4"]],
+                        games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
+                    ),
+                ],
+            )
+        )
+        print(f"Submitted {result.num_games} games")
+
+Sub-resources:
+
+* :attr:`Vairified.members` — get/search/rating_updates
+* :attr:`Vairified.matches` — submit bulk match batches
+* :attr:`Vairified.oauth` — OAuth authorization flow
+* :attr:`Vairified.leaderboard` — leaderboard queries
+* :attr:`Vairified.usage` — API usage stats (method: ``await client.usage()``)
 """
 
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from collections.abc import AsyncIterator
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -19,781 +57,670 @@ from vairified.errors import (
     ValidationError,
 )
 from vairified.models import (
-    Match,
-    MatchResult,
+    MatchBatch,
+    MatchBatchResult,
     Member,
-    Player,
     RatingUpdate,
-    SearchResults,
+    SearchFilters,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
     SCOPES,
     AuthorizationResponse,
+    OAuthScope,
     TokenResponse,
 )
 
+if TYPE_CHECKING:
+    from typing import Self
+
+
+# ---------------------------------------------------------------------------
 # Environment URLs
-# Note: "production" points to current active API
-ENVIRONMENTS = {
+# ---------------------------------------------------------------------------
+
+ENVIRONMENTS: dict[str, str] = {
     "production": "https://api-next.vairified.com/api/v1",
     "staging": "https://api-staging.vairified.com/api/v1",
     "local": "http://localhost:3001/api/v1",
 }
 
-DEFAULT_BASE_URL = ENVIRONMENTS["production"]
-DEFAULT_TIMEOUT = 30.0
+_DEFAULT_BASE_URL = ENVIRONMENTS["production"]
+_DEFAULT_TIMEOUT = 30.0
+_DEFAULT_SEARCH_LIMIT = 20
+
+
+# ---------------------------------------------------------------------------
+# Main client
+# ---------------------------------------------------------------------------
 
 
 class Vairified:
     """
     Async client for the Vairified Partner API.
 
-    :ivar api_key: Your Partner API key
-    :ivar base_url: API base URL
-    :ivar env: Environment name (production, staging, local)
+    The client is organized around sub-resources that mirror the REST
+    structure — ``client.members``, ``client.matches``, ``client.oauth``,
+    ``client.leaderboard``. Each sub-resource is a thin wrapper around
+    the HTTP layer on this object.
 
-    Example::
-
-        async with Vairified(api_key="vair_pk_xxx") as client:
-            member = await client.get_member("user_123")
-            print(member.name, member.rating)
-
-    Example with staging environment::
-
-        async with Vairified(api_key="vair_pk_xxx", env="staging") as client:
-            member = await client.get_member("user_123")
-
-    .. note::
-        If your API key has the "dry-run" scope, match submissions will be
-        validated but not persisted. This is useful for testing integrations.
+    :param api_key: Partner API key (``vair_pk_...``). Falls back to the
+        ``VAIRIFIED_API_KEY`` environment variable if not supplied.
+    :param env: Environment preset — ``"production"`` (default),
+        ``"staging"``, or ``"local"``. Overridden by ``base_url``.
+    :param base_url: Explicit base URL. Takes precedence over ``env``.
+    :param timeout: Request timeout in seconds.
+    :raises ValueError: If no API key is provided.
     """
 
     def __init__(
         self,
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         *,
-        env: Optional[str] = None,
-        base_url: Optional[str] = None,
-        timeout: float = DEFAULT_TIMEOUT,
-    ):
-        """
-        Initialize the Vairified client.
+        env: str | None = None,
+        base_url: str | None = None,
+        timeout: float = _DEFAULT_TIMEOUT,
+    ) -> None:
+        resolved_key = api_key or os.environ.get("VAIRIFIED_API_KEY", "")
+        if not resolved_key:
+            raise ValueError(
+                "API key required. Pass api_key=... or set VAIRIFIED_API_KEY."
+            )
+        self.api_key = resolved_key
 
-        :param api_key: Partner API key. Falls back to ``VAIRIFIED_API_KEY`` env var.
-        :param env: Environment: "production" (default), "staging", or "local".
-        :param base_url: Override API base URL. Takes precedence over ``env``.
-        :param timeout: Request timeout in seconds.
-        :raises ValueError: If no API key is provided.
-        """
-        self.api_key = api_key or os.environ.get("VAIRIFIED_API_KEY", "")
-        if not self.api_key:
-            raise ValueError("API key required. Pass api_key or set VAIRIFIED_API_KEY.")
-
-        # Resolve base URL from env or explicit base_url
         if base_url:
             self.base_url = base_url.rstrip("/")
+            resolved_env = env or "production"
         elif env:
             if env not in ENVIRONMENTS:
-                valid = ", ".join(ENVIRONMENTS.keys())
-                raise ValueError(f"Unknown environment: {env}. Use: {valid}")
+                valid = ", ".join(ENVIRONMENTS)
+                raise ValueError(f"Unknown environment: {env!r}. Use one of: {valid}")
             self.base_url = ENVIRONMENTS[env]
+            resolved_env = env
         else:
-            # Default to VAIRIFIED_ENV or 'production'
-            default_env = os.environ.get("VAIRIFIED_ENV", "production")
-            self.base_url = ENVIRONMENTS.get(default_env, DEFAULT_BASE_URL)
-
-        self.env = env or os.environ.get("VAIRIFIED_ENV", "production")
+            resolved_env = os.environ.get("VAIRIFIED_ENV", "production")
+            self.base_url = ENVIRONMENTS.get(resolved_env, _DEFAULT_BASE_URL)
+        self.env = resolved_env
         self.timeout = timeout
-        self._client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self) -> "Vairified":
-        """Enter async context."""
-        self._client = httpx.AsyncClient(
+        self._http: httpx.AsyncClient | None = None
+
+        # Sub-resources — lazy-init would work but these are cheap and
+        # let callers type `client.members` without a property ceremony.
+        self.members = MembersResource(self)
+        self.matches = MatchesResource(self)
+        self.oauth = OAuthResource(self)
+        self.leaderboard = LeaderboardResource(self)
+
+    # ---- Context manager ----
+
+    async def __aenter__(self) -> "Self":
+        self._http = httpx.AsyncClient(
             base_url=self.base_url,
             headers=self._headers(),
             timeout=self.timeout,
         )
         return self
 
-    async def __aexit__(self, *args) -> None:
-        """Exit async context."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+    async def __aexit__(self, *_: Any) -> None:
+        await self.close()
 
     async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
+        """Close the underlying HTTP client. Safe to call multiple times."""
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
+
+    # ---- HTTP plumbing (used by sub-resources) ----
 
     def _headers(self) -> dict[str, str]:
-        """Get request headers."""
         return {
             "X-API-Key": self.api_key,
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
 
-    def _ensure_client(self) -> httpx.AsyncClient:
-        """Ensure client is initialized."""
-        if not self._client:
-            self._client = httpx.AsyncClient(
+    def _ensure_http(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(
                 base_url=self.base_url,
                 headers=self._headers(),
                 timeout=self.timeout,
             )
-        return self._client
-
-    def _handle_error(self, response: httpx.Response) -> None:
-        """Handle error responses."""
-        status = response.status_code
-
-        try:
-            body = response.json()
-            message = body.get("message", response.text)
-        except Exception:
-            body = None
-            message = response.text
-
-        if status == 401:
-            raise AuthenticationError(message, response=body)
-        elif status == 404:
-            raise NotFoundError(message, response=body)
-        elif status == 429:
-            retry_after = response.headers.get("Retry-After")
-            raise RateLimitError(
-                message,
-                retry_after=int(retry_after) if retry_after else None,
-                response=body,
-            )
-        elif status == 400:
-            raise ValidationError(message, response=body)
-        else:
-            raise VairifiedError(message, status_code=status, response=body)
+        return self._http
 
     async def _request(
         self,
         method: str,
         path: str,
         *,
-        params: Optional[dict] = None,
-        json: Optional[Any] = None,
-    ) -> dict:
-        """Make HTTP request."""
-        client = self._ensure_client()
-        response = await client.request(method, path, params=params, json=json)
-
+        params: dict[str, Any] | None = None,
+        json: Any | None = None,
+    ) -> Any:
+        """Make an HTTP request, raising a typed exception on non-2xx."""
+        http = self._ensure_http()
+        response = await http.request(method, path, params=params, json=json)
         if response.status_code >= 400:
-            self._handle_error(response)
+            _raise_from_response(response)
+        return response.json() if response.content else None
 
-        return response.json()
+    # ---- Usage (direct method — doesn't warrant its own resource) ----
 
-    # -------------------------------------------------------------------------
-    # Member Operations
-    # -------------------------------------------------------------------------
-
-    async def get_member(self, player_id: str) -> Member:
+    async def usage(self) -> dict[str, Any]:
         """
-        Get a connected member by their external ID.
+        API usage statistics for the current API key.
 
-        **Requires OAuth Connection**: The player must have connected their
-        account to your application via OAuth before you can access their data.
+        Returns rate-limit status, request counts, and quota usage for
+        monitoring purposes.
+        """
+        data = await self._request("GET", "/partner/usage")
+        return data or {}
 
-        :param player_id: External player ID (vair_mem_xxx format).
-        :returns: Member object with profile and rating data.
-        :raises NotFoundError: If member is not found or invalid ID format.
-        :raises ForbiddenError: If player has not connected to your app.
+    def __repr__(self) -> str:  # pragma: no cover
+        return f"<Vairified env={self.env!r} base_url={self.base_url!r}>"
+
+
+# ---------------------------------------------------------------------------
+# Error mapping
+# ---------------------------------------------------------------------------
+
+
+def _raise_from_response(response: httpx.Response) -> None:
+    """Convert an httpx error response into the right typed exception."""
+    status = response.status_code
+    try:
+        body = response.json()
+    except Exception:
+        body = None
+
+    if isinstance(body, dict):
+        message = body.get("message") or body.get("error") or response.text
+    else:
+        message = response.text or f"HTTP {status}"
+
+    if status == 401:
+        raise AuthenticationError(message, response=body)
+    if status == 404:
+        raise NotFoundError(message, response=body)
+    if status == 429:
+        retry_after_hdr = response.headers.get("Retry-After")
+        retry_after = int(retry_after_hdr) if retry_after_hdr else None
+        raise RateLimitError(message, retry_after=retry_after, response=body)
+    if status == 400:
+        raise ValidationError(message, response=body)
+    raise VairifiedError(message, status_code=status, response=body)
+
+
+# ---------------------------------------------------------------------------
+# Sub-resources
+# ---------------------------------------------------------------------------
+
+
+class _Resource:
+    """Base class for sub-resources — just holds a back-reference."""
+
+    def __init__(self, client: Vairified) -> None:
+        self._client = client
+
+
+class MembersResource(_Resource):
+    """
+    Member operations — get a single member, auto-paginating search,
+    and polling for rating change notifications.
+    """
+
+    async def get(
+        self,
+        player_id: str,
+        *,
+        sport: str | list[str] | None = None,
+    ) -> Member:
+        """
+        Get a connected member by external ID.
+
+        **Requires an active OAuth connection** between your partner app
+        and the player. Use the OAuth flow on ``client.oauth`` first.
+
+        :param player_id: External player ID in ``vair_mem_xxx`` format.
+        :param sport: Optional sport filter. Pass a single sport code to
+            get ratings for just that sport, or a list to get multiple.
+            When omitted, the response contains every sport the player
+            has ratings in.
+        :raises NotFoundError: If the external ID is invalid or unknown.
+        :raises VairifiedError: If the player has not connected to your app
+            (403) or if the API request otherwise fails.
 
         Example::
 
-            member = await client.get_member("vair_mem_0ABC123def456GHI789jk")
-            print(f"{member.name}: {member.rating}")
-        """
-        data = await self._request(
-            "GET",
-            "/partner/member",
-            params={"id": player_id},
-        )
-        return Member.from_dict(data, client=self)
+            member = await client.members.get("vair_mem_xxx")
+            print(member.display_name, member.rating_for("pickleball"))
 
-    # -------------------------------------------------------------------------
-    # Search Operations
-    # -------------------------------------------------------------------------
+            # Just pickleball
+            member = await client.members.get("vair_mem_xxx", sport="pickleball")
+
+            # Multiple sports
+            member = await client.members.get(
+                "vair_mem_xxx",
+                sport=["pickleball", "padel"],
+            )
+        """
+        params: dict[str, Any] = {"id": player_id}
+        if sport is not None:
+            params["sport"] = sport if isinstance(sport, str) else ",".join(sport)
+        data = await self._client._request("GET", "/partner/member", params=params)
+        return Member.model_validate(data)
 
     async def search(
         self,
         *,
-        name: Optional[str] = None,
-        city: Optional[str] = None,
-        state: Optional[str] = None,
-        country: Optional[str] = None,
-        zip_code: Optional[str] = None,
-        rating_min: Optional[float] = None,
-        rating_max: Optional[float] = None,
-        gender: Optional[str] = None,
-        vairified_only: bool = False,
-        age: Optional[int] = None,
-        age_min: Optional[int] = None,
-        age_max: Optional[int] = None,
-        sort_by: Optional[str] = None,
+        sport: str | list[str] | None = None,
+        name: str | None = None,
+        member_id: int | str | None = None,
+        city: str | None = None,
+        state: str | None = None,
+        country: str | None = None,
+        zip: str | None = None,
+        location: str | None = None,
+        gender: str | None = None,
+        vairified_only: bool | None = None,
+        wheelchair: bool | None = None,
+        rating_min: float | None = None,
+        rating_max: float | None = None,
+        age: int | None = None,
+        age_min: int | None = None,
+        age_max: int | None = None,
+        sort_by: str | None = None,
         sort_order: str = "desc",
-        page: int = 1,
-        limit: int = 20,
-    ) -> SearchResults:
+        page_size: int = _DEFAULT_SEARCH_LIMIT,
+        max_results: int | None = None,
+    ) -> AsyncIterator[Member]:
         """
-        Search for players.
+        Search for players, yielding each match as an :class:`Member`.
 
-        :param name: Name to search for (partial match).
-        :param city: City filter.
-        :param state: State code (e.g., "TX", "CA").
-        :param country: Country code (e.g., "US").
-        :param zip_code: ZIP/postal code.
-        :param rating_min: Minimum rating (2.0-8.0).
-        :param rating_max: Maximum rating (2.0-8.0).
-        :param gender: "MALE" or "FEMALE".
-        :param vairified_only: Only return verified players.
+        This is an **auto-paginating async iterator** — it fetches pages
+        from the server lazily as you iterate, so you can stream through
+        thousands of results without holding them all in memory::
+
+            async for member in client.members.search(city="Austin"):
+                print(member.display_name, member.rating_for("pickleball"))
+
+        Stop early by ``break``-ing out of the loop, or cap the total
+        number of results with ``max_results``.
+
+        :param sport: Sport code (or list of codes) to filter ratings by.
+            Omit to get every sport each player has ratings in.
+        :param name: Name partial-match (first or last name).
+        :param member_id: Exact numeric member ID.
+        :param city: City filter (partial match, case-insensitive).
+        :param state: State code (e.g. ``"TX"``).
+        :param country: ISO 3166 alpha-2 country code.
+        :param zip: ZIP/postal code (exact match).
+        :param location: General location search.
+        :param gender: ``"MALE"``, ``"FEMALE"``, or ``None`` for any.
+        :param vairified_only: When ``True``, only verified players.
+        :param wheelchair: When ``True``, only wheelchair players.
+        :param rating_min: Lower rating bound (2.0-8.0).
+        :param rating_max: Upper rating bound (2.0-8.0).
         :param age: Exact age filter.
-        :param age_min: Minimum age (for range).
-        :param age_max: Maximum age (for range).
+        :param age_min: Lower age bound.
+        :param age_max: Upper age bound.
         :param sort_by: Field to sort by.
-        :param sort_order: "asc" or "desc".
-        :param page: Page number (1-indexed).
-        :param limit: Results per page (max 100).
-        :returns: SearchResults with players and pagination info.
-
-        Example::
-
-            results = await client.search(city="Austin", rating_min=4.0)
-            for player in results:
-                print(f"{player.name}: {player.rating}")
-
-            # Pagination
-            if results.has_more:
-                next_results = await results.next_page()
+        :param sort_order: ``"asc"`` or ``"desc"``.
+        :param page_size: Results per HTTP request. Server cap is 100.
+        :param max_results: Optional cap on total results to iterate.
         """
-        # Build params
-        params: dict[str, Any] = {"limit": limit}
+        # Build the filter model so we serialize consistently.
+        sport_param = sport if isinstance(sport, str) else (
+            ",".join(sport) if sport else None
+        )
+        member_param: str | None
+        if member_id is not None:
+            member_param = str(member_id)
+        elif name is not None:
+            member_param = name
+        else:
+            member_param = None
 
-        if name:
-            params["member"] = name
-        if city:
-            params["city"] = city
-        if state:
-            params["state"] = state
-        if country:
-            params["country"] = country
-        if zip_code:
-            params["zip"] = zip_code
-        if rating_min is not None:
-            params["rating1"] = rating_min
-        if rating_max is not None:
-            params["rating2"] = rating_max
-        if gender:
-            params["gender"] = gender.upper()
-        if vairified_only:
-            params["vairified"] = True
-        if sort_by:
-            params["sortField"] = sort_by
-            params["sortDirection"] = sort_order
-
-        # Age handling
+        # Figure out the age filter shape from the kwargs.
+        age_filter_type: str | None = None
+        age1: int | None = None
+        age2: int | None = None
         if age is not None:
-            params["ageFilterType"] = "exact"
-            params["age1"] = age
+            age_filter_type = "exact"
+            age1 = age
         elif age_min is not None and age_max is not None:
-            params["ageFilterType"] = "range"
-            params["age1"] = age_min
-            params["age2"] = age_max
+            age_filter_type = "range"
+            age1 = age_min
+            age2 = age_max
         elif age_min is not None:
-            params["ageFilterType"] = "above"
-            params["age1"] = age_min
+            age_filter_type = "above"
+            age1 = age_min
         elif age_max is not None:
-            params["ageFilterType"] = "below"
-            params["age1"] = age_max
+            age_filter_type = "below"
+            age1 = age_max
 
-        # Pagination (API uses offset internally)
-        if page > 1:
-            params["offset"] = (page - 1) * limit
+        filters = SearchFilters(
+            sport=sport_param,
+            member=member_param,
+            city=city,
+            state=state,
+            country=country,
+            zip=zip,
+            location=location,
+            gender=gender.upper() if gender else None,
+            vairified=vairified_only,
+            wheelchair=wheelchair,
+            rating1=rating_min,
+            rating2=rating_max,
+            age_filter_type=age_filter_type,
+            age1=age1,
+            age2=age2,
+            sort_field=sort_by,
+            sort_direction=sort_order,
+            limit=min(page_size, 100),
+        )
 
-        # Store filters for pagination
-        filters = {
-            "name": name,
-            "city": city,
-            "state": state,
-            "country": country,
-            "zip_code": zip_code,
-            "rating_min": rating_min,
-            "rating_max": rating_max,
-            "gender": gender,
-            "vairified_only": vairified_only,
-            "age": age,
-            "age_min": age_min,
-            "age_max": age_max,
-            "sort_by": sort_by,
-            "sort_order": sort_order,
-            "limit": limit,
-        }
+        offset = 0
+        yielded = 0
+        limit = filters.limit or _DEFAULT_SEARCH_LIMIT
 
-        data = await self._request("GET", "/partner/search", params=params)
+        while True:
+            page_params = filters.to_query_params()
+            page_params["offset"] = offset
 
-        # Handle both array and object responses
-        if isinstance(data, list):
-            data = {"players": data, "total": len(data), "page": page, "limit": limit}
-
-        return SearchResults.from_dict(data, client=self, filters=filters)
-
-    async def find_player(self, name: str) -> Optional[Player]:
-        """
-        Find a single player by name.
-
-        Convenience method that returns the first match.
-
-        :param name: Player name to search for.
-        :returns: Player if found, None otherwise.
-        """
-        results = await self.search(name=name, limit=1)
-        return results[0] if results.players else None
-
-    # -------------------------------------------------------------------------
-    # Match Operations
-    # -------------------------------------------------------------------------
-
-    async def submit_match(self, match: Match) -> MatchResult:
-        """
-        Submit a single match.
-
-        :param match: Match object with teams and scores.
-        :returns: MatchResult with submission status.
-        :raises VairifiedError: If submission fails.
-
-        Example::
-
-            match = Match(
-                event="Weekly League",
-                bracket="4.0 Doubles",
-                date=datetime.now(),
-                team1=("player1_id", "player2_id"),
-                team2=("player3_id", "player4_id"),
-                scores=[(11, 9), (11, 7)],
+            data = await self._client._request(
+                "GET", "/partner/search", params=page_params
             )
-            result = await client.submit_match(match)
-            if result:
-                print(f"Submitted {result.num_games} games")
-        """
-        return await self.submit_matches([match])
 
-    async def submit_matches(self, matches: list[Match]) -> MatchResult:
-        """
-        Submit multiple matches in a batch.
+            # Partner API returns a plain list of results.
+            batch: list[dict[str, Any]] = data if isinstance(data, list) else (
+                data.get("players", []) if isinstance(data, dict) else []
+            )
 
-        :param matches: List of Match objects.
-        :returns: MatchResult with ``success``, ``num_matches``, ``num_games``,
-            and optionally ``dry_run``, ``message``, ``errors``.
+            if not batch:
+                return
+
+            for raw in batch:
+                yield Member.model_validate(raw)
+                yielded += 1
+                if max_results is not None and yielded >= max_results:
+                    return
+
+            # Stop when the last page was short (no more results upstream).
+            if len(batch) < limit:
+                return
+            offset += limit
+
+    async def rating_updates(self) -> list[RatingUpdate]:
+        """
+        Poll for rating change notifications for subscribed members.
+
+        Returns a list of :class:`RatingUpdate` objects for every player
+        whose rating has changed since the last poll. Members are
+        considered "subscribed" when they have an active OAuth
+        connection with the ``webhook:subscribe`` scope.
+        """
+        data = await self._client._request("GET", "/partner/rating-updates")
+        if not isinstance(data, dict):
+            return []
+        return [RatingUpdate.model_validate(u) for u in data.get("updates", [])]
+
+    async def find(self, name: str) -> Member | None:
+        """
+        Return the first search hit for a name, or ``None``.
+
+        Convenience method for the common "look up by name" case::
+
+            mike = await client.members.find("Mike Barker")
+            if mike:
+                print(mike.rating_for("pickleball"))
+        """
+        async for member in self.search(name=name, page_size=1, max_results=1):
+            return member
+        return None
+
+
+class MatchesResource(_Resource):
+    """Match submission — one call submits a full batch."""
+
+    async def submit(self, batch: MatchBatch) -> MatchBatchResult:
+        """
+        Submit a :class:`MatchBatch` for rating calculation.
+
+        All players in every match must have granted the ``match:submit``
+        scope via OAuth (unless your API key has the
+        ``match:submit:trusted`` scope, which skips per-player consent).
+
+        Set ``batch.dry_run = True`` to validate without persisting.
 
         Example::
 
-            matches = [match1, match2, match3]
-            result = await client.submit_matches(matches)
-            if result:
+            batch = MatchBatch(
+                sport="pickleball",
+                win_score=11,
+                win_by=2,
+                bracket="4.0 Doubles",
+                event="Weekly League",
+                match_date="2026-04-11T14:00:00Z",
+                matches=[
+                    Match(
+                        identifier="m1",
+                        teams=[["vair_mem_aaa", "vair_mem_bbb"],
+                               ["vair_mem_ccc", "vair_mem_ddd"]],
+                        games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
+                    ),
+                ],
+            )
+            result = await client.matches.submit(batch)
+            if result.ok:
                 print(f"Submitted {result.num_games} games")
-            if result.dry_run:
-                print("This was a dry run - no data persisted")
         """
-        data = await self._request(
-            "POST",
-            "/partner/matches",
-            json={"matches": [m.to_dict() for m in matches]},
+        body = batch.model_dump(by_alias=True, exclude_none=True)
+        data = await self._client._request("POST", "/partner/matches", json=body)
+        return MatchBatchResult.model_validate(data)
+
+    async def test_webhook(self, webhook_url: str) -> dict[str, Any]:
+        """Send a test payload to a webhook URL."""
+        data = await self._client._request(
+            "POST", "/partner/webhook-test", json={"webhookUrl": webhook_url}
         )
-        return MatchResult.from_dict(data)
+        return data or {}
 
-    # -------------------------------------------------------------------------
-    # Rating Updates
-    # -------------------------------------------------------------------------
 
-    async def get_rating_updates(self) -> list[RatingUpdate]:
-        """
-        Get rating updates for subscribed members.
+class OAuthResource(_Resource):
+    """
+    OAuth 2.0 flow for obtaining player consent.
 
-        Members are subscribed when you call :meth:`get_member`.
+    Typical flow:
 
-        :returns: List of RatingUpdate objects.
+    1. Call :meth:`authorize` to start an authorization — you get a URL
+       to redirect the player to.
+    2. The player approves on the Vairified site and gets redirected to
+       your ``redirect_uri`` with a ``code`` query parameter.
+    3. Call :meth:`exchange_token` to swap the code for access and
+       refresh tokens plus the player's UUID.
+    4. Store the refresh token and call :meth:`refresh` when the
+       access token expires.
+    5. Call :meth:`revoke` to disconnect a player from your app.
+    """
 
-        Example::
-
-            updates = await client.get_rating_updates()
-            for update in updates:
-                print(f"{update.member_id}: {update.previous_rating}")
-        """
-        data = await self._request("GET", "/partner/rating-updates")
-        return [RatingUpdate.from_dict(u, client=self) for u in data.get("updates", [])]
-
-    async def test_webhook(self, webhook_url: str) -> dict:
-        """
-        Test webhook endpoint.
-
-        :param webhook_url: URL to send test webhook to.
-        :returns: Test result dict.
-        """
-        return await self._request(
-            "POST",
-            "/partner/webhook-test",
-            json={"webhookUrl": webhook_url},
-        )
-
-    # -------------------------------------------------------------------------
-    # OAuth Operations
-    # -------------------------------------------------------------------------
-
-    async def start_oauth(
+    async def authorize(
         self,
         redirect_uri: str,
-        scopes: Optional[list[str]] = None,
-        state: Optional[str] = None,
+        *,
+        scopes: list[OAuthScope] | None = None,
+        state: str | None = None,
     ) -> AuthorizationResponse:
         """
         Start an OAuth authorization flow.
 
-        This creates a pending authorization and returns the URL where
-        users should be redirected to approve access.
-
         :param redirect_uri: Your application's callback URL.
-        :param scopes: Permission scopes to request.
-            Defaults to profile:read, rating:read.
-        :param state: CSRF protection state parameter (recommended).
-        :returns: AuthorizationResponse with the URL to redirect users to.
-        :raises OAuthError: If the authorization fails to start.
-
-        Example::
-
-            auth = await client.start_oauth(
-                redirect_uri="https://myapp.com/callback",
-                scopes=["profile:read", "rating:read", "match:submit"],
-                state="random_csrf_token",
-            )
-            # Redirect user to auth.authorization_url
+        :param scopes: Scopes to request. Defaults to
+            ``["profile:read", "rating:read"]``. ``profile:read`` is
+            always added if missing.
+        :param state: CSRF protection token — persist and verify on callback.
+        :raises OAuthError: If a requested scope is invalid.
         """
-        from vairified.errors import OAuthError  # noqa: F811
+        from vairified.errors import OAuthError  # local import to avoid cycle
 
-        if scopes is None:
-            scopes = list(DEFAULT_SCOPES)
+        scope_list: list[str] = [*(scopes or DEFAULT_SCOPES)]
+        if "profile:read" not in scope_list:
+            scope_list = ["profile:read", *scope_list]
 
-        # Ensure profile:read is always included
-        if "profile:read" not in scopes:
-            scopes = ["profile:read"] + scopes
-
-        # Validate scopes
-        for scope in scopes:
+        for scope in scope_list:
             if scope not in SCOPES:
-                raise OAuthError(f"Invalid scope: {scope}", error_code="invalid_scope")
+                raise OAuthError(
+                    f"Invalid scope: {scope}", error_code="invalid_scope"
+                )
 
-        data = await self._request(
+        data = await self._client._request(
             "POST",
             "/partner/oauth/authorize",
             json={
                 "redirectUri": redirect_uri,
-                "scope": ",".join(scopes),
+                "scope": ",".join(scope_list),
                 "state": state,
             },
         )
-
+        payload = data or {}
         return AuthorizationResponse(
-            authorization_url=data.get("authorizationUrl", ""),
-            code=data.get("code", ""),
+            authorization_url=payload.get("authorizationUrl", ""),
+            code=payload.get("code", ""),
             state=state,
         )
 
-    async def exchange_token(
-        self,
-        code: str,
-        redirect_uri: str,
-    ) -> TokenResponse:
-        """
-        Exchange an authorization code for access and refresh tokens.
-
-        Call this after the user approves access and is redirected back
-        to your application with a code parameter.
-
-        :param code: Authorization code from the callback URL.
-        :param redirect_uri: Must match the redirect_uri used in start_oauth.
-        :returns: TokenResponse with access_token, refresh_token, and player_id.
-        :raises OAuthError: If the code is invalid or expired.
-
-        Example::
-
-            # After user is redirected to: https://myapp.com/callback?code=xxx
-            tokens = await client.exchange_token(
-                code=request.query_params["code"],
-                redirect_uri="https://myapp.com/callback",
-            )
-            # Store tokens.access_token and tokens.refresh_token securely
-            # Use tokens.player_id to identify the connected player
-        """
-        data = await self._request(
+    async def exchange_token(self, code: str, redirect_uri: str) -> TokenResponse:
+        """Exchange an authorization code for access and refresh tokens."""
+        data = await self._client._request(
             "POST",
             "/partner/oauth/token",
-            json={
-                "code": code,
-                "redirectUri": redirect_uri,
-            },
+            json={"code": code, "redirectUri": redirect_uri},
         )
+        return _token_response_from(data or {})
 
-        return TokenResponse(
-            access_token=data.get("accessToken", ""),
-            refresh_token=data.get("refreshToken"),
-            expires_in=data.get("expiresIn", 3600),
-            scope=data.get("scope", "").split(",") if data.get("scope") else [],
-            player_id=data.get("playerId", ""),
-        )
-
-    async def refresh_access_token(
-        self,
-        refresh_token: str,
-    ) -> TokenResponse:
-        """
-        Refresh an expired access token.
-
-        Use this when an access token expires to obtain a new one
-        without requiring the user to re-authorize.
-
-        :param refresh_token: The refresh token from a previous token exchange.
-        :returns: TokenResponse with new access_token and optionally
-            a new refresh_token.
-        :raises OAuthError: If the refresh token is invalid or revoked.
-
-        Example::
-
-            try:
-                new_tokens = await client.refresh_access_token(stored_refresh_token)
-                # Update stored tokens
-            except OAuthError as e:
-                if e.error_code == "invalid_grant":
-                    # Refresh token revoked, user needs to re-authorize
-                    pass
-        """
-        data = await self._request(
+    async def refresh(self, refresh_token: str) -> TokenResponse:
+        """Refresh an expired access token using a refresh token."""
+        data = await self._client._request(
             "POST",
             "/partner/oauth/refresh",
             json={"refreshToken": refresh_token},
         )
+        return _token_response_from(data or {})
 
-        return TokenResponse(
-            access_token=data.get("accessToken", ""),
-            refresh_token=data.get("refreshToken"),
-            expires_in=data.get("expiresIn", 3600),
-            scope=data.get("scope", "").split(",") if data.get("scope") else [],
-            player_id=data.get("playerId", ""),
-        )
-
-    async def revoke_connection(self, player_id: str) -> dict:
-        """
-        Revoke a player's OAuth connection.
-
-        This disconnects the player from your application. You will no
-        longer be able to access their data or submit matches on their behalf.
-
-        :param player_id: The player's external ID (vair_mem_xxx format).
-        :returns: Dict with success status.
-        :raises OAuthError: If the revocation fails.
-
-        Example::
-
-            await client.revoke_connection("vair_mem_0ABC123def456GHI789jk")
-            # Player is now disconnected
-        """
-        return await self._request(
+    async def revoke(self, player_id: str) -> dict[str, Any]:
+        """Revoke a player's OAuth connection to your app."""
+        data = await self._client._request(
             "POST",
             "/partner/oauth/revoke",
             json={"playerId": player_id},
         )
+        return data or {}
 
-    async def get_available_scopes(self) -> list[dict[str, str]]:
-        """
-        Get a list of available OAuth scopes.
-
-        :returns: List of scope objects with id, name, and description.
-
-        Example::
-
-            scopes = await client.get_available_scopes()
-            for scope in scopes:
-                print(f"{scope['id']}: {scope['description']}")
-        """
-        data = await self._request("GET", "/partner/oauth/scopes")
+    async def available_scopes(self) -> list[dict[str, str]]:
+        """Return the list of OAuth scopes the server currently supports."""
+        data = await self._client._request("GET", "/partner/oauth/scopes")
+        if not isinstance(data, dict):
+            return []
         return data.get("scopes", [])
 
-    async def get_usage(self) -> dict:
-        """
-        Get API usage statistics for your partner account.
 
-        :returns: Dict with usage statistics (requests, limits, etc.).
+class LeaderboardResource(_Resource):
+    """Read-only leaderboard queries."""
 
-        Example::
-
-            usage = await client.get_usage()
-            print(f"Requests today: {usage['requestsToday']}")
-            print(f"Rate limit: {usage['rateLimit']}/hour")
-        """
-        return await self._request("GET", "/partner/usage")
-
-    # -------------------------------------------------------------------------
-    # Leaderboard Operations
-    # -------------------------------------------------------------------------
-
-    async def get_leaderboard(
+    async def list(
         self,
         *,
-        category: Optional[str] = None,
-        age_bracket: Optional[str] = None,
-        scope: Optional[str] = None,
-        state: Optional[str] = None,
-        city: Optional[str] = None,
-        club_id: Optional[str] = None,
-        gender: Optional[str] = None,
+        category: str | None = None,
+        age_bracket: str | None = None,
+        scope: str | None = None,
+        state: str | None = None,
+        city: str | None = None,
+        club_id: str | None = None,
+        gender: str | None = None,
         verified_only: bool = False,
-        min_games: Optional[int] = None,
+        min_games: int | None = None,
         limit: int = 50,
         offset: int = 0,
-        search: Optional[str] = None,
-    ) -> dict:
-        """
-        Get leaderboard data with filtering options.
-
-        **Requires API Key Scope:** ``leaderboard:read`` or ``read``
-
-        :param category: Rating category: "doubles", "singles", "mixed" (default: doubles).
-        :param age_bracket: Age bracket: "open", "40+", "50+", "60+", "70+" (default: open).
-        :param scope: Geographic scope: "global", "state", "city", "club" (default: global).
-        :param state: State code (required if scope is "state").
-        :param city: City name (required if scope is "city").
-        :param club_id: Club ID (required if scope is "club").
-        :param gender: Filter by gender: "male", "female".
-        :param verified_only: Only show VAIRified players.
-        :param min_games: Minimum games to appear (default: 10).
-        :param limit: Results per page (default: 50, max: 100).
-        :param offset: Pagination offset.
-        :param search: Search by player name.
-        :returns: Dict with players, stats, filters, and pagination.
-
-        Example::
-
-            # Get global doubles leaderboard
-            leaderboard = await client.get_leaderboard()
-
-            # Get state-level singles leaderboard
-            tx_leaderboard = await client.get_leaderboard(
-                category="singles",
-                scope="state",
-                state="TX",
-            )
-
-            # Get 50+ age bracket
-            senior_leaderboard = await client.get_leaderboard(
-                age_bracket="50+",
-                verified_only=True,
-            )
-
-            for player in leaderboard["players"]:
-                print(f"#{player['rank']} {player['displayName']}: {player['rating']}")
-        """
+        search: str | None = None,
+    ) -> dict[str, Any]:
+        """Fetch a leaderboard page with optional filters."""
         params: dict[str, Any] = {"limit": limit, "offset": offset}
-
-        if category:
-            params["category"] = category
-        if age_bracket:
-            params["ageBracket"] = age_bracket
-        if scope:
-            params["scope"] = scope
-        if state:
-            params["state"] = state
-        if city:
-            params["city"] = city
-        if club_id:
-            params["clubId"] = club_id
-        if gender:
-            params["gender"] = gender
+        for key, value in (
+            ("category", category),
+            ("ageBracket", age_bracket),
+            ("scope", scope),
+            ("state", state),
+            ("city", city),
+            ("clubId", club_id),
+            ("gender", gender),
+            ("minGames", min_games),
+            ("search", search),
+        ):
+            if value is not None:
+                params[key] = value
         if verified_only:
             params["verifiedOnly"] = True
-        if min_games is not None:
-            params["minGames"] = min_games
-        if search:
-            params["search"] = search
+        data = await self._client._request("GET", "/leaderboard", params=params)
+        return data or {}
 
-        return await self._request("GET", "/leaderboard", params=params)
-
-    async def get_player_rank(
+    async def rank(
         self,
         player_id: str,
         *,
         category: str = "doubles",
         age_bracket: str = "open",
         scope: str = "global",
-        state: Optional[str] = None,
-        city: Optional[str] = None,
-        club_id: Optional[str] = None,
+        state: str | None = None,
+        city: str | None = None,
+        club_id: str | None = None,
         context_size: int = 5,
-    ) -> dict:
-        """
-        Get a specific player's rank on the leaderboard.
-
-        **Requires API Key Scope:** ``leaderboard:read`` or ``read``
-
-        :param player_id: External player ID (vair_mem_xxx format).
-        :param category: Rating category (default: "doubles").
-        :param age_bracket: Age bracket (default: "open").
-        :param scope: Geographic scope (default: "global").
-        :param state: State code for state scope.
-        :param city: City name for city scope.
-        :param club_id: Club ID for club scope.
-        :param context_size: Number of nearby players to include (default: 5).
-        :returns: Dict with rank, percentile, and nearby players.
-
-        Example::
-
-            rank = await client.get_player_rank(
-                "vair_mem_xxx",
-                category="doubles",
-                context_size=5,
-            )
-
-            print(f"Rank: #{rank['rank']} (top {rank['percentile']}%)")
-            print(f"Points to next rank: {rank.get('pointsToNextRank')}")
-
-            # Show nearby players
-            for nearby in rank["nearbyPlayers"]:
-                print(f"#{nearby['rank']} {nearby['displayName']}")
-        """
-        body = {
+    ) -> dict[str, Any]:
+        """Fetch a specific player's rank + nearby players."""
+        body: dict[str, Any] = {
             "playerId": player_id,
             "category": category,
             "ageBracket": age_bracket,
             "scope": scope,
             "contextSize": context_size,
         }
-
         if state:
             body["state"] = state
         if city:
             body["city"] = city
         if club_id:
             body["clubId"] = club_id
+        data = await self._client._request("POST", "/leaderboard/rank", json=body)
+        return data or {}
 
-        return await self._request("POST", "/leaderboard/rank", json=body)
+    async def categories(self) -> dict[str, Any]:
+        """List available leaderboard categories, brackets, and scopes."""
+        data = await self._client._request("GET", "/leaderboard/categories")
+        return data or {}
 
-    async def get_leaderboard_categories(self) -> dict:
-        """
-        Get available leaderboard categories and brackets.
 
-        **Requires API Key Scope:** ``leaderboard:read`` or ``read``
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
-        :returns: Dict with categories, ageBrackets, and scopes.
 
-        Example::
+def _token_response_from(data: dict[str, Any]) -> TokenResponse:
+    """Build a TokenResponse from a raw OAuth response dict."""
+    scope_raw = data.get("scope", "")
+    scope_list = scope_raw.split(",") if scope_raw else []
+    return TokenResponse(
+        access_token=data.get("accessToken", ""),
+        refresh_token=data.get("refreshToken"),
+        expires_in=data.get("expiresIn", 3600),
+        scope=scope_list,
+        player_id=data.get("playerId", ""),
+    )
 
-            categories = await client.get_leaderboard_categories()
 
-            print("Categories:", [c["name"] for c in categories["categories"]])
-            print("Age Brackets:", [b["name"] for b in categories["ageBrackets"]])
-        """
-        return await self._request("GET", "/leaderboard/categories")
+__all__ = [
+    "ENVIRONMENTS",
+    "LeaderboardResource",
+    "MatchesResource",
+    "MembersResource",
+    "OAuthResource",
+    "Vairified",
+]

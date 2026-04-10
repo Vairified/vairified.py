@@ -11,9 +11,9 @@ sys.path.insert(0, os.path.abspath(".."))
 
 # -- Project information -----------------------------------------------------
 project = "Vairified Python SDK"
-copyright = "2025, Vairified"
+copyright = "2026, Vairified"
 author = "Vairified"
-release = "0.1.0"
+release = "0.2.0"
 
 # -- General configuration ---------------------------------------------------
 extensions = [
@@ -72,4 +72,10 @@ always_document_param_types = True
 # Intersphinx mapping
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3", None),
+    "pydantic": ("https://docs.pydantic.dev/latest", None),
 }
+
+# Suppress noisy warnings from autodoc picking up private helpers
+# and unresolved references to external generic bases.
+nitpicky = False
+suppress_warnings = ["ref.class", "ref.func", "ref.meth", "ref.attr"]

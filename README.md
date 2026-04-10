@@ -2,19 +2,22 @@
 
 <p align="center">
   <strong>Official Python SDK for the Vairified Partner API</strong><br>
-  Player ratings, search, and match submission
+  Multi-sport player ratings, search, and bulk match submission
 </p>
 
 <p align="center">
   <a href="https://github.com/Vairified/vairified.py/actions/workflows/ci.yml"><img src="https://github.com/Vairified/vairified.py/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.1.0-green.svg" alt="Version 0.1.0">
+  <img src="https://img.shields.io/badge/version-0.2.0-green.svg" alt="Version 0.2.0">
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+">
   <a href="https://pypi.org/project/vairified/"><img src="https://img.shields.io/pypi/v/vairified.svg" alt="PyPI"></a>
 </p>
 
 ---
 
-Python SDK for integrating with the [Vairified](https://vairified.com) player rating platform. Async-first, object-oriented design for easy integration.
+Async-first Python SDK for the [Vairified](https://vairified.com) Partner API. Built on
+`httpx` and `pydantic` v2, with a surface designed to feel native: properties
+instead of getters, dict-like access to rating splits, auto-paginating search,
+and a sub-resource layout that mirrors the REST API.
 
 ## Installation
 
@@ -22,7 +25,7 @@ Python SDK for integrating with the [Vairified](https://vairified.com) player ra
 pip install vairified
 ```
 
-Or with [UV](https://docs.astral.sh/uv):
+Or with [uv](https://docs.astral.sh/uv):
 
 ```bash
 uv add vairified
@@ -34,295 +37,287 @@ uv add vairified
 import asyncio
 from vairified import Vairified
 
-async def main():
+async def main() -> None:
     async with Vairified(api_key="vair_pk_xxx") as client:
-        # Get a member - automatically subscribes to their rating updates
-        member = await client.get_member("clerk_user_123")
-        print(f"{member.name}: {member.rating}")
-        print(f"Verified: {member.is_vairified}")
-        print(f"Best rating: {member.rating_splits.best}")
+        member = await client.members.get("vair_mem_xxx")
+        print(member.name, "rated", member.rating_for("pickleball"))
 
 asyncio.run(main())
 ```
 
-## Features
+The client is an async context manager — opening it creates an `httpx.AsyncClient`,
+closing it releases the underlying connection pool.
 
-### Search for Players
+## Sub-resources
+
+Every operation lives on a sub-resource that matches the REST path:
+
+| Sub-resource            | Operations                                              |
+|-------------------------|---------------------------------------------------------|
+| `client.members`        | `get`, `search`, `find`, `rating_updates`               |
+| `client.matches`        | `submit`, `test_webhook`                                |
+| `client.oauth`          | `authorize`, `exchange_token`, `refresh`, `revoke`      |
+| `client.leaderboard`    | `list`, `rank`, `categories`                            |
+| `client.usage()`        | Rate-limit + request-count stats                        |
+
+## Members
+
+### Get a connected member
 
 ```python
 async with Vairified(api_key="vair_pk_xxx") as client:
-    # Search with filters
-    results = await client.search(
+    member = await client.members.get("vair_mem_xxx")
+
+    print(member.name)                      # Full name
+    print(member.display_name)               # "Mike B."
+    print(member.rating_for("pickleball"))   # 3.915
+    print(member.status.is_vairified)        # True
+
+    # Dict-like access to rating splits for a specific sport
+    pb = member.sport["pickleball"]
+    print(pb.rating, pb.abbr)                # 3.915 VO
+    print(pb["overall-open"].rating)         # 3.915
+    print("singles-open" in pb)              # True
+    for key, split in pb:
+        print(key, split.rating)
+```
+
+### Filter ratings to specific sports
+
+```python
+# Just pickleball
+member = await client.members.get("vair_mem_xxx", sport="pickleball")
+
+# Multiple sports
+member = await client.members.get(
+    "vair_mem_xxx",
+    sport=["pickleball", "padel"],
+)
+```
+
+### Auto-paginating search
+
+`search()` is an async iterator — it streams results one member at a time,
+fetching pages lazily as you iterate. `break` early when you have what you
+need, or cap with `max_results`.
+
+```python
+async with Vairified(api_key="vair_pk_xxx") as client:
+    async for member in client.members.search(
         city="Austin",
         state="TX",
         rating_min=3.5,
         rating_max=4.5,
         vairified_only=True,
-        limit=20,
-    )
+    ):
+        print(member.name, member.rating_for("pickleball"))
 
-    # Iterate over results
-    for player in results:
-        print(f"{player.name}: {player.rating}")
-
-    # Pagination
-    print(f"Page {results.page} of {results.pages}")
-    if results.has_more:
-        next_page = await results.next_page()
+    # Find first N across pages
+    top_20: list = []
+    async for m in client.members.search(name="Smith", max_results=20):
+        top_20.append(m)
 ```
 
-### Find a Player by Name
+### Find by name (first hit only)
 
 ```python
-async with Vairified(api_key="vair_pk_xxx") as client:
-    player = await client.find_player("John Smith")
-    if player:
-        print(f"Found: {player.name} ({player.rating})")
+mike = await client.members.find("Mike Barker")
+if mike:
+    print(mike.rating_for("pickleball"))
 ```
 
-### Submit Match Results
+### Rating change notifications
 
 ```python
-from datetime import datetime
-from vairified import Vairified, Match
+updates = await client.members.rating_updates()
+for update in updates:
+    arrow = "↑" if update.improved else "↓"
+    print(f"{update.display_name} {arrow} delta={update.delta:+.3f}")
+```
+
+## Match Submission
+
+Matches are submitted as a `MatchBatch` — defaults at the batch level apply
+to every match unless overridden. The shape is n-team × n-game, so singles,
+doubles, and round-robin all go through the same path.
+
+```python
+from vairified import Vairified, MatchBatch, Match, Game
 
 async with Vairified(api_key="vair_pk_xxx") as client:
-    # Doubles match: 11-9, 11-7
-    match = Match(
-        event="Weekly League",
+    batch = MatchBatch(
+        sport="pickleball",
+        win_score=11,
+        win_by=2,
         bracket="4.0 Doubles",
-        date=datetime.now(),
-        team1=("player1_id", "player2_id"),
-        team2=("player3_id", "player4_id"),
-        scores=[(11, 9), (11, 7)],
+        event="Weekly League",
+        match_date="2026-04-11T14:00:00Z",
+        matches=[
+            Match(
+                identifier="m1",
+                teams=[["vair_mem_aaa", "vair_mem_bbb"],
+                       ["vair_mem_ccc", "vair_mem_ddd"]],
+                games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
+            ),
+            Match(
+                identifier="m2",
+                teams=[["vair_mem_eee"], ["vair_mem_fff"]],   # singles
+                games=[Game(scores=[11, 9]), Game(scores=[11, 7])],
+            ),
+        ],
     )
-
-    result = await client.submit_match(match)
-    if result:
-        print(f"Submitted {result.num_games} games")
-
-    # Singles match
-    singles = Match(
-        event="Club Singles",
-        bracket="Open Singles",
-        date=datetime.now(),
-        team1=("player1_id",),
-        team2=("player2_id",),
-        scores=[(11, 8), (9, 11), (11, 6)],
-    )
-    await client.submit_match(singles)
+    result = await client.matches.submit(batch)
+    if result.ok:
+        print(f"Submitted {result.num_games} games in {result.num_matches} matches")
 ```
 
-### Leaderboard
+Set `batch.dry_run = True` to validate without persisting — your API key
+must have the `dry-run` scope.
 
-```python
-async with Vairified(api_key="vair_pk_xxx") as client:
-    # Get global doubles leaderboard
-    leaderboard = await client.get_leaderboard()
-
-    # Get state-level singles leaderboard
-    tx_leaderboard = await client.get_leaderboard(
-        category="singles",
-        scope="state",
-        state="TX",
-        limit=50,
-    )
-
-    # Get 50+ age bracket with verified players only
-    senior_leaderboard = await client.get_leaderboard(
-        age_bracket="50+",
-        verified_only=True,
-    )
-
-    # Display results
-    for player in leaderboard["players"]:
-        print(f"#{player['rank']} {player['displayName']}: {player['rating']}")
-
-    # Get a specific player's rank
-    rank = await client.get_player_rank(
-        "vair_mem_xxx",
-        category="doubles",
-        context_size=5,
-    )
-    print(f"Rank: #{rank['rank']} (top {rank['percentile']:.1f}%)")
-
-    # Get available categories
-    categories = await client.get_leaderboard_categories()
-    print("Categories:", [c["name"] for c in categories["categories"]])
-```
-
-### Get Rating Updates
-
-```python
-async with Vairified(api_key="vair_pk_xxx") as client:
-    # First, look up members to subscribe to their updates
-    await client.get_member("user_1")
-    await client.get_member("user_2")
-
-    # Later, check for rating changes
-    updates = await client.get_rating_updates()
-    for update in updates:
-        direction = "improved" if update.improved else "dropped"
-        print(f"{update.member_id} {direction}: {update.previous_rating:.2f} -> {update.new_rating:.2f}")
-
-        # Get the full member profile
-        member = await update.get_member()
-```
-
-### OAuth Connect Flow
-
-Connect players to your application using OAuth to access their profile and rating data.
+## OAuth Connect Flow
 
 ```python
 import secrets
 from vairified import Vairified, OAuthError
 
 async with Vairified(api_key="vair_pk_xxx") as client:
-    # Step 1: Start authorization
-    state = secrets.token_urlsafe(32)  # CSRF protection
-    auth = await client.start_oauth(
+    # Step 1 — start authorization
+    state = secrets.token_urlsafe(32)
+    auth = await client.oauth.authorize(
         redirect_uri="https://myapp.com/oauth/callback",
         scopes=["profile:read", "rating:read", "match:submit"],
         state=state,
     )
-    
-    # Redirect user to auth.authorization_url
-    print(f"Redirect to: {auth.authorization_url}")
-```
+    redirect_to = auth.authorization_url
 
-```python
-# Step 2: Handle callback (in your /oauth/callback route)
-async with Vairified(api_key="vair_pk_xxx") as client:
-    # Exchange code for tokens
-    tokens = await client.exchange_token(
-        code=request.query_params["code"],
+    # Step 2 — exchange the callback code
+    tokens = await client.oauth.exchange_token(
+        code="code-from-callback",
         redirect_uri="https://myapp.com/oauth/callback",
     )
-    
-    # Store tokens securely
+    access = tokens.access_token
+    refresh = tokens.refresh_token
     player_id = tokens.player_id
-    access_token = tokens.access_token
-    refresh_token = tokens.refresh_token
-    
-    # Now you can access the player's data
-    member = await client.get_member(player_id)
-    print(f"Connected: {member.name} ({member.rating})")
-```
 
-```python
-# Step 3: Refresh expired tokens
-async with Vairified(api_key="vair_pk_xxx") as client:
+    # Step 3 — refresh when the access token expires
     try:
-        new_tokens = await client.refresh_access_token(stored_refresh_token)
-        # Update stored tokens
+        new_tokens = await client.oauth.refresh(refresh)
     except OAuthError as e:
         if e.error_code == "invalid_grant":
-            # Token revoked, user needs to re-authorize
-            pass
+            ...  # user must re-authorize
+
+    # Step 4 — revoke the connection
+    await client.oauth.revoke(player_id)
 ```
 
-### Available OAuth Scopes
+### Available scopes
 
-| Scope | Description |
-|-------|-------------|
-| `profile:read` | Name, location, verification status |
-| `profile:email` | Email address |
-| `rating:read` | Current rating and rating splits |
-| `rating:history` | Complete rating history |
-| `match:submit` | Submit matches on behalf of user |
-| `webhook:subscribe` | Rating change notifications |
+| Scope                | Description                                    |
+|----------------------|------------------------------------------------|
+| `profile:read`       | Name, location, verification status            |
+| `profile:email`      | Email address                                  |
+| `rating:read`        | Current rating and rating splits               |
+| `rating:history`     | Complete rating history                        |
+| `match:submit`       | Submit matches on behalf of user               |
+| `webhook:subscribe`  | Rating change notifications                    |
 
-### Revoke Connection
+## Leaderboards
 
 ```python
 async with Vairified(api_key="vair_pk_xxx") as client:
-    await client.revoke_connection("vair_mem_xxx")
+    # Global doubles leaderboard
+    lb = await client.leaderboard.list()
+
+    # Texas singles, verified only
+    tx = await client.leaderboard.list(
+        category="singles",
+        scope="state",
+        state="TX",
+        verified_only=True,
+        limit=50,
+    )
+
+    # A specific player's rank with 5 players on either side
+    rank = await client.leaderboard.rank(
+        "vair_mem_xxx",
+        category="doubles",
+        context_size=5,
+    )
+    print(f"#{rank['rank']} (top {rank['percentile']:.1f}%)")
+
+    # Available categories, brackets, scopes
+    categories = await client.leaderboard.categories()
 ```
 
 ## Models
 
-### Player
+All response models are immutable `pydantic` v2 `BaseModel`s. They accept both
+snake_case (Python) and camelCase (wire) field names, and tolerate new fields
+from the server so your code keeps working across API additions.
+
+### `Member`
 
 ```python
-player.id              # UUID or member ID
-player.member_id       # Legacy member ID
-player.name            # "John Smith"
-player.first_name      # "John"
-player.last_name       # "Smith"
-player.rating          # 4.25
-player.is_vairified    # True/False
-player.rating_splits   # RatingSplits object
-player.city            # "Austin"
-player.state           # "TX"
-player.verified_rating # Best verified rating
+member.member_id                     # Numeric member ID
+member.id                            # UUID
+member.name                          # Full name (property)
+member.display_name                  # "Mike B."
+member.first_name                    # "Mike"
+member.last_name                     # "Barker"
+member.gender                        # Gender enum (MALE | FEMALE | OTHER | UNKNOWN)
+member.age
+member.city / state / zip / country
+member.status.is_vairified           # Grouped status flags
+member.status.is_connected
+member.sport                         # dict[str, SportRating]
+member.sports                        # ["pickleball", "padel"] (property)
+member.rating_for("pickleball")      # float | None
+member.split("overall-open")         # RatingSplit | None
 ```
 
-### Member (extends Player)
+### `SportRating` (dict-like)
 
 ```python
-member.email           # Email address
-await member.refresh() # Refresh data from API
+pb = member.sport["pickleball"]
+pb.rating                     # Primary rating for this sport
+pb.abbr                       # "VO", "VG", etc.
+pb["overall-open"].rating     # Any split key
+len(pb)                       # Number of splits
+"singles-40+" in pb           # Membership check
+for key, split in pb: ...     # Iterate (yields (key, RatingSplit) tuples)
 ```
 
-### RatingSplits
+### `Match` / `MatchBatch`
 
-Access ratings by category:
-
-```python
-splits = member.rating_splits
-splits.open           # Open division rating
-splits.gender         # Same-gender doubles rating
-splits.mixed          # Mixed doubles rating
-splits.recreational   # Recreational rating
-splits.singles        # Singles rating
-splits.best           # Best available rating
-splits.get("50_and_up")  # Age bracket rating
-```
-
-### Match
+Request-side models use camelCase aliases (`winScore`, `winBy`, `matchDate`)
+when serialized — write Python in snake_case, the wire stays consistent.
 
 ```python
-match = Match(
-    event="Weekly League",
-    bracket="4.0 Doubles",
-    date=datetime.now(),
-    team1=("id1", "id2"),        # Player IDs for team 1
-    team2=("id3", "id4"),        # Player IDs for team 2
-    scores=[(11, 9), (11, 7)],   # Game scores
-    location="Austin Club",      # Optional
-    match_type="SIDEOUT",        # Default: "SIDEOUT"
-    source="PARTNER",            # Default: "PARTNER"
+batch = MatchBatch(
+    sport="pickleball",
+    win_score=11,
+    win_by=2,
+    match_date="2026-04-11T14:00:00Z",
+    matches=[
+        Match(
+            identifier="m1",
+            teams=[["p1", "p2"], ["p3", "p4"]],   # n-team × n-player
+            games=[Game(scores=[11, 8]),           # n-game match
+                   Game(scores=[11, 5])],
+        ),
+    ],
 )
-
-match.format         # "DOUBLES" or "SINGLES"
-match.winner         # 1 or 2 (0 if tie)
-match.score_summary  # "11-9, 11-7"
-match.identifier     # Auto-generated unique ID
 ```
 
-### MatchResult
+### `RatingUpdate`
 
 ```python
-result = await client.submit_matches([match1, match2])
-result.success       # True/False
-result.num_matches   # Number processed
-result.num_games     # Games recorded
-result.dry_run       # True if validation only
-result.message       # Human-readable message
-result.errors        # List of errors
-bool(result)         # True if successful
-```
-
-### SearchResults
-
-```python
-results.players      # List of Player objects
-results.total        # Total matching players
-results.page         # Current page
-results.pages        # Total pages
-results.has_more     # More pages available
-await results.next_page()  # Get next page
-bool(results)        # True if has players
+update.member_id
+update.previous_rating
+update.new_rating
+update.delta        # new - previous (or None)
+update.improved     # True if delta > 0
+update.changed_at
 ```
 
 ## Configuration
@@ -330,66 +325,44 @@ bool(results)        # True if has players
 ```python
 from vairified import Vairified
 
-# Basic usage
-client = Vairified(api_key="vair_pk_xxx")
-
-# Use staging for development/testing
+# Environment preset
+client = Vairified(api_key="vair_pk_xxx", env="production")   # default
 client = Vairified(api_key="vair_pk_xxx", env="staging")
+client = Vairified(api_key="vair_pk_xxx", env="local")
 
-# Custom configuration
+# Custom base URL (overrides env)
 client = Vairified(
     api_key="vair_pk_xxx",
+    base_url="http://localhost:3001/api/v1",
     timeout=30.0,
 )
 ```
 
-### Environment Variables
+### Environment variables
 
 ```bash
 export VAIRIFIED_API_KEY="vair_pk_xxx"
+export VAIRIFIED_ENV="staging"   # optional; default: production
 ```
 
 ```python
-# API key read from environment
-async with Vairified() as client:
+async with Vairified() as client:   # reads both env vars
     ...
 ```
 
 ## API Key Scopes
 
-Your API key determines which endpoints you can access. The scope system uses a hierarchy:
-
-```
-admin → write → read → granular scopes
-```
-
-| Scope | Access |
-|-------|--------|
-| `admin` | Full access to all endpoints |
-| `write` | All read + write operations |
-| `read` | All read operations (search, leaderboard, member) |
-| `leaderboard:read` | Leaderboard endpoints only |
-| `player:search` | Player search only |
-| `member:read` | Connected member data only |
-| `match:submit` | Submit match results |
-| `tournament:import` | Import tournament data |
-| `dry-run` | Validate writes without persisting |
-
-## Dry-Run Mode (Dev Keys)
-
-If your API key has the `dry-run` scope, match submissions are **validated but not persisted**. This is useful for testing integrations without affecting production data.
-
-```python
-# With a dry-run API key
-async with Vairified(api_key="vair_pk_dev_xxx") as client:
-    result = await client.submit_matches([match1, match2])
-    
-    if result.dry_run:
-        print(f"Validation passed: {result.num_games} games would be created")
-        print(result.message)
-```
-
-Request a dry-run API key from your Vairified partner contact for integration testing.
+| Scope               | Access                                         |
+|---------------------|------------------------------------------------|
+| `admin`             | Full access to all endpoints                   |
+| `write`             | All read + write operations                    |
+| `read`              | All read operations                            |
+| `leaderboard:read`  | Leaderboard endpoints only                     |
+| `player:search`     | Player search only                             |
+| `member:read`       | Connected member data only                     |
+| `match:submit`      | Submit match results                           |
+| `tournament:import` | Import tournament data                         |
+| `dry-run`           | Validate writes without persisting             |
 
 ## Error Handling
 
@@ -400,23 +373,32 @@ from vairified import (
     RateLimitError,
     AuthenticationError,
     NotFoundError,
+    ValidationError,
     OAuthError,
 )
 
 async with Vairified(api_key="vair_pk_xxx") as client:
     try:
-        member = await client.get_member("user_123")
+        member = await client.members.get("vair_mem_xxx")
     except RateLimitError as e:
-        print(f"Rate limited. Retry after {e.retry_after} seconds")
+        print(f"Rate limited; retry after {e.retry_after}s")
     except AuthenticationError:
         print("Invalid API key")
     except NotFoundError:
         print("Member not found")
+    except ValidationError as e:
+        print(f"Bad request: {e.message}")
     except OAuthError as e:
         print(f"OAuth error: {e.message} (code: {e.error_code})")
     except VairifiedError as e:
         print(f"API error: {e.message} (status: {e.status_code})")
 ```
+
+## Migrating from 0.1.x
+
+Version 0.2.0 is a breaking rewrite. See the
+[migration guide](https://vairified.github.io/vairified.py/migrating.html)
+for the full diff, and [CHANGELOG.md](CHANGELOG.md) for the release notes.
 
 ## Development
 
@@ -429,12 +411,12 @@ uv run pytest
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
 <p align="center">
-  <a href="https://vairified.com">vairified.com</a> · 
-  <a href="https://vairified.github.io/vairified.py">Documentation</a> · 
+  <a href="https://vairified.com">vairified.com</a> ·
+  <a href="https://vairified.github.io/vairified.py">Documentation</a> ·
   <a href="mailto:support@vairified.com">Support</a>
 </p>

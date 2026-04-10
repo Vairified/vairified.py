@@ -1,18 +1,17 @@
 Quick Start
 ===========
 
-This guide will get you up and running with the Vairified Python SDK in minutes.
+This guide gets you up and running with the Vairified Python SDK in a
+few minutes.
 
 Installation
 ------------
-
-Install from PyPI using pip:
 
 .. code-block:: bash
 
    pip install vairified
 
-Or with UV (recommended):
+Or with `uv <https://docs.astral.sh/uv>`_:
 
 .. code-block:: bash
 
@@ -21,118 +20,140 @@ Or with UV (recommended):
 Configuration
 -------------
 
-You'll need a Partner API key from Vairified. You can pass it directly or use
-environment variables:
+You'll need a Partner API key from Vairified. Pass it directly or set it
+in the environment:
 
 .. code-block:: bash
 
    export VAIRIFIED_API_KEY="vair_pk_xxx"
-   export VAIRIFIED_ENV="next"  # Optional: production, next, staging, local
+   export VAIRIFIED_ENV="production"   # optional; default: production
 
-Basic Usage
------------
+Supported environments: ``production``, ``staging``, ``local``.
 
-The SDK uses an async context manager pattern:
+Hello, member
+-------------
+
+The SDK uses an async context manager. Opening it creates the underlying
+``httpx.AsyncClient``; closing it releases the connection pool.
 
 .. code-block:: python
 
    import asyncio
    from vairified import Vairified
 
-   async def main():
+   async def main() -> None:
        async with Vairified(api_key="vair_pk_xxx") as client:
-           # Your code here
-           pass
+           member = await client.members.get("vair_mem_xxx")
+           print(member.name, "rated", member.rating_for("pickleball"))
 
    asyncio.run(main())
 
-Get a Member
+Sub-resources
+-------------
+
+Every operation lives on a sub-resource that mirrors the REST path:
+
+- ``client.members`` — ``get``, ``search``, ``find``, ``rating_updates``
+- ``client.matches`` — ``submit``, ``test_webhook``
+- ``client.oauth`` — ``authorize``, ``exchange_token``, ``refresh``, ``revoke``
+- ``client.leaderboard`` — ``list``, ``rank``, ``categories``
+- ``client.usage()`` — rate-limit and request-count stats
+
+Get a member
 ^^^^^^^^^^^^
 
-Fetch a member by their Clerk user ID, member ID, or UUID:
-
 .. code-block:: python
 
-   member = await client.get_member("clerk_user_123")
-   print(f"{member.name}: {member.rating}")
-   print(f"Verified: {member.is_vairified}")
+   member = await client.members.get("vair_mem_xxx")
 
-Search Players
+   print(member.name)                        # Full name
+   print(member.display_name)                # "Mike B."
+   print(member.rating_for("pickleball"))    # 3.915
+   print(member.status.is_vairified)         # True
+
+   # Dict-like access to rating splits
+   pb = member.sport["pickleball"]
+   print(pb.rating, pb.abbr)                 # 3.915 VO
+   print(pb["overall-open"].rating)          # 3.915
+
+Search players
 ^^^^^^^^^^^^^^
 
-Search with various filters:
+``search()`` is an async iterator that fetches pages lazily — iterate
+directly, ``break`` early, or cap with ``max_results``:
 
 .. code-block:: python
 
-   results = await client.search(
+   async for member in client.members.search(
        city="Austin",
        state="TX",
        rating_min=3.5,
        rating_max=4.5,
        vairified_only=True,
-   )
+   ):
+       print(member.name, member.rating_for("pickleball"))
 
-   for player in results:
-       print(f"{player.name}: {player.rating}")
+   # First 20 hits across all pages
+   top_20 = []
+   async for m in client.members.search(name="Smith", max_results=20):
+       top_20.append(m)
 
-   # Pagination
-   if results.has_more:
-       next_page = await results.next_page()
-
-Submit Matches
+Submit matches
 ^^^^^^^^^^^^^^
 
-Submit match results:
+Matches are submitted as a ``MatchBatch``. Batch-level fields apply as
+defaults to every match unless overridden. The n-team × n-game shape
+supports singles, doubles, round-robin, and best-of-N through a single
+schema.
 
 .. code-block:: python
 
-   from datetime import datetime
-   from vairified import Match
+   from vairified import MatchBatch, Match, Game
 
-   # Doubles match
-   match = Match(
-       event="Weekly League",
+   batch = MatchBatch(
+       sport="pickleball",
+       win_score=11,
+       win_by=2,
        bracket="4.0 Doubles",
-       date=datetime.now(),
-       team1=("player1_id", "player2_id"),
-       team2=("player3_id", "player4_id"),
-       scores=[(11, 9), (11, 7)],
+       event="Weekly League",
+       match_date="2026-04-11T14:00:00Z",
+       matches=[
+           Match(
+               identifier="m1",
+               teams=[["vair_mem_aaa", "vair_mem_bbb"],
+                      ["vair_mem_ccc", "vair_mem_ddd"]],
+               games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
+           ),
+       ],
    )
+   result = await client.matches.submit(batch)
+   if result.ok:
+       print(f"Submitted {result.num_games} games in {result.num_matches} matches")
 
-   result = await client.submit_match(match)
-   if result:
-       print(f"Submitted {result.num_games} games")
-
-Environment Selection
+Environment selection
 ---------------------
 
-The SDK defaults to the production environment:
-
 .. code-block:: python
 
-   # Default (production)
+   # Default — production
    client = Vairified(api_key="vair_pk_xxx")
 
-   # Staging for testing
+   # Staging
    client = Vairified(api_key="vair_pk_xxx", env="staging")
 
    # Local development
    client = Vairified(api_key="vair_pk_xxx", env="local")
 
-Available environments:
+   # Explicit base URL (overrides env)
+   client = Vairified(
+       api_key="vair_pk_xxx",
+       base_url="http://localhost:3001/api/v1",
+   )
 
-==============  ================================
-Environment     Description
-==============  ================================
-``production``  Live API (default)
-``staging``     Testing environment
-``local``       Local development
-==============  ================================
-
-OAuth Connect Flow
+OAuth connect flow
 ------------------
 
-Connect players to your application using OAuth:
+Connect players to your application with OAuth:
 
 .. code-block:: python
 
@@ -140,53 +161,54 @@ Connect players to your application using OAuth:
    from vairified import Vairified
 
    async with Vairified(api_key="vair_pk_xxx") as client:
-       # Step 1: Start OAuth flow
-       state = secrets.token_urlsafe(32)  # CSRF protection
-       auth = await client.start_oauth(
+       # Step 1 — start authorization
+       state = secrets.token_urlsafe(32)
+       auth = await client.oauth.authorize(
            redirect_uri="https://your-app.com/callback",
            scopes=["profile:read", "rating:read"],
            state=state,
        )
-       # Redirect user to auth.authorization_url
+       # Redirect the user to auth.authorization_url
 
-After the user approves, exchange the code for tokens:
+       # Step 2 — exchange the code from the callback
+       tokens = await client.oauth.exchange_token(
+           code="code-from-callback",
+           redirect_uri="https://your-app.com/callback",
+       )
 
-.. code-block:: python
+       # Step 3 — access the connected player
+       member = await client.members.get(tokens.player_id)
 
-   # Step 2: Exchange code for tokens
-   tokens = await client.exchange_token(code, redirect_uri)
+See :doc:`guide` for refresh, revoke, and scope details.
 
-   # Store tokens securely
-   player_id = tokens.player_id
-   access_token = tokens.access_token
-
-   # Step 3: Access connected player
-   member = await client.get_member(player_id)
-
-Error Handling
+Error handling
 --------------
 
-The SDK provides typed exceptions:
+The SDK provides typed exceptions you can catch individually:
 
 .. code-block:: python
 
    from vairified import (
+       Vairified,
        VairifiedError,
        RateLimitError,
        AuthenticationError,
        NotFoundError,
+       ValidationError,
        OAuthError,
    )
 
    try:
-       member = await client.get_member("user_123")
+       member = await client.members.get("vair_mem_xxx")
    except RateLimitError as e:
-       print(f"Rate limited. Retry after {e.retry_after} seconds")
+       print(f"Rate limited; retry after {e.retry_after} seconds")
    except AuthenticationError:
        print("Invalid API key")
    except NotFoundError:
        print("Member not found")
+   except ValidationError as e:
+       print(f"Bad request: {e.message}")
    except OAuthError as e:
        print(f"OAuth error: {e.message} (code: {e.error_code})")
    except VairifiedError as e:
-       print(f"API error: {e.message}")
+       print(f"API error: {e.message} (status: {e.status_code})")

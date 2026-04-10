@@ -10,7 +10,7 @@ combine-as-imports = true
 
 [project]
 name = "vairified"
-version = "0.1.0"
+version = "0.2.0"
 maintainers = [
   {name = "Vivek Joshy", email = "vjoshy@vairified.com"}
 ]
@@ -50,6 +50,7 @@ dev = [
     "ruff>=0.14.0",
     "respx>=0.22.0",
     "bump-my-version>=1.2.0",
+    "towncrier>=24.8.0",
 ]
 docs = [
     "sphinx>=8.0.0",
@@ -67,3 +68,49 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["vairified"]
+
+[tool.towncrier]
+package = "vairified"
+package_dir = "."
+filename = "CHANGELOG.md"
+directory = "changelog.d"
+title_format = "## [{version}] - {project_date}"
+issue_format = "[#{issue}](https://github.com/Vairified/vairified.py/issues/{issue})"
+start_string = "<!-- towncrier release notes start -->\n"
+underlines = ["", "", ""]
+template = "changelog.d/_template.md.jinja"
+
+[[tool.towncrier.type]]
+directory = "breaking"
+name = "Breaking Changes"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "added"
+name = "Added"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "changed"
+name = "Changed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "deprecated"
+name = "Deprecated"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "removed"
+name = "Removed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "fixed"
+name = "Fixed"
+showcontent = true
+
+[[tool.towncrier.type]]
+directory = "security"
+name = "Security"
+showcontent = true

@@ -7,11 +7,23 @@ Utilities for implementing the "Connect with Vairified" OAuth flow.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Literal, Optional
 from urllib.parse import urlencode
 
+#: Scope string literal — the union of every scope name the Vairified
+#: OAuth server accepts. Use this type in your own signatures to get
+#: autocomplete and type-checking for the scope strings you pass.
+OAuthScope = Literal[
+    "profile:read",
+    "profile:email",
+    "rating:read",
+    "rating:history",
+    "match:submit",
+    "webhook:subscribe",
+]
+
 # Available OAuth scopes
-SCOPES = {
+SCOPES: dict[str, str] = {
     "profile:read": "Access your name, location, and verification status",
     "profile:email": "Access your email address",
     "rating:read": "View your current rating and rating splits",
@@ -21,7 +33,7 @@ SCOPES = {
 }
 
 # Default scopes requested
-DEFAULT_SCOPES = ["profile:read", "rating:read"]
+DEFAULT_SCOPES: list[OAuthScope] = ["profile:read", "rating:read"]
 
 
 @dataclass

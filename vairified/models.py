@@ -1,618 +1,573 @@
 """
-Vairified SDK Models
+Vairified SDK Models — Partner API v1 shapes.
 
-Rich model classes with methods for easy API interaction.
+All response models are :class:`pydantic.BaseModel` with
+``model_config = ConfigDict(frozen=True, populate_by_name=True, extra="allow")``
+so they're immutable, support both snake_case (Python) and camelCase (wire)
+field names, and tolerate new server-side fields without breaking.
+
+The public surface is designed to feel native:
+
+* ``member.name`` is a :func:`property`, not a method — no ``get_name()``.
+* ``member.sport["pickleball"]`` is dict-like access; ``SportRating``
+  implements ``__getitem__``, ``__iter__``, ``__contains__``, ``__len__``.
+* Every model has a human-readable ``__repr__`` so the REPL is useful.
+* Models work with :keyword:`match` statements via pydantic field access.
+
+Breaking from v0.1.x:
+    The flat single-sport response (``member.rating`` / ``member.rating_splits``)
+    has been replaced by a multi-sport ``member.sport`` dict keyed by sport code.
+    The :class:`Match` class takes ``teams: list[list[str]]`` and
+    ``games: list[Game]`` instead of ``team1/team2`` plus per-game tuples.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import TYPE_CHECKING, Any, Optional
-from uuid import uuid4
+from collections.abc import Iterator
+from enum import StrEnum
+from typing import Any
 
-if TYPE_CHECKING:
-    from vairified.client import Vairified
+from pydantic import BaseModel, ConfigDict, Field
+
+# ---------------------------------------------------------------------------
+# Response config — shared by every read-side model.
+# ---------------------------------------------------------------------------
+
+_RESPONSE_CONFIG = ConfigDict(
+    frozen=True,
+    populate_by_name=True,
+    extra="allow",
+)
 
 
-@dataclass
-class RatingSplit:
+# ---------------------------------------------------------------------------
+# Enums
+# ---------------------------------------------------------------------------
+
+
+class Gender(StrEnum):
     """
-    A single rating split with metadata.
+    Normalized gender enum returned by the Partner API.
 
-    :ivar rating: The rating value.
-    :ivar abbr: Abbreviation (e.g., "VG", "50+").
-    :ivar date_played: Date of last match in this category.
+    Matches the UPPERCASE tokens emitted by
+    ``PartnerMember.gender`` on the backend.
     """
+
+    MALE = "MALE"
+    FEMALE = "FEMALE"
+    OTHER = "OTHER"
+    UNKNOWN = "UNKNOWN"
+
+
+# ---------------------------------------------------------------------------
+# Rating splits + sport ratings
+# ---------------------------------------------------------------------------
+
+
+class RatingSplit(BaseModel):
+    """
+    One slice of a player's rating for a specific category × age bracket.
+
+    Keys in :attr:`SportRating.rating_splits` are strings like
+    ``"overall-open"``, ``"singles-12-13"``, or ``"overall-40+"``.
+    """
+
+    model_config = _RESPONSE_CONFIG
 
     rating: float
     abbr: str
-    date_played: Optional[str] = None
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "RatingSplit":
-        """
-        Create from API response dict.
+    def __repr__(self) -> str:  # pragma: no cover - REPL affordance
+        return f"<RatingSplit {self.rating:.3f} {self.abbr}>"
 
-        :param data: Rating split data from API.
-        :returns: RatingSplit instance.
-        """
-        rating_val = data.get("rating", 0)
-        if isinstance(rating_val, str):
-            rating_val = float(rating_val) if rating_val else 0.0
-        return cls(
-            rating=rating_val,
-            abbr=data.get("abbr", ""),
-            date_played=data.get("date_played"),
+
+class SportRating(BaseModel):
+    """
+    A player's ratings for a single sport.
+
+    The top-level ``rating`` / ``abbr`` is the primary rating for that
+    sport (conventionally the overall-open bracket). Every category × age
+    bracket the player has played is also available under
+    :attr:`rating_splits`, keyed by ``{category}-{bracketCode}``.
+
+    This class is dict-like — you can access splits by subscript,
+    iterate them, check membership, and get the length without touching
+    ``rating_splits`` directly::
+
+        overall = member.sport["pickleball"]["overall-open"].rating
+        for key, split in member.sport["pickleball"]:
+            print(key, split.rating)
+        if "singles-40+" in member.sport["pickleball"]:
+            ...
+        print(len(member.sport["pickleball"]), "splits")
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    rating: float
+    abbr: str
+    rating_splits: dict[str, RatingSplit] = Field(
+        default_factory=dict, alias="ratingSplits"
+    )
+
+    def __getitem__(self, key: str) -> RatingSplit:
+        return self.rating_splits[key]
+
+    def __iter__(self) -> Iterator[tuple[str, RatingSplit]]:  # type: ignore[override]
+        return iter(self.rating_splits.items())
+
+    def __contains__(self, key: object) -> bool:
+        return key in self.rating_splits
+
+    def __len__(self) -> int:
+        return len(self.rating_splits)
+
+    def keys(self) -> Any:
+        """Split keys (e.g. ``"overall-open"``, ``"singles-12-13"``)."""
+        return self.rating_splits.keys()
+
+    def get(
+        self, key: str, default: RatingSplit | None = None
+    ) -> RatingSplit | None:
+        """Dict-style safe lookup."""
+        return self.rating_splits.get(key, default)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<SportRating {self.rating:.3f} {self.abbr} "
+            f"splits={len(self.rating_splits)}>"
         )
 
 
-@dataclass
-class RatingSplits:
+# ---------------------------------------------------------------------------
+# Member / player
+# ---------------------------------------------------------------------------
+
+
+class MemberStatus(BaseModel):
     """
-    Rating breakdown by category.
+    Status flags for a player.
 
-    Access ratings by category name (e.g., "open", "50_and_up") or
-    use convenience properties for common categories.
-
-    :ivar splits: Dict mapping category names to RatingSplit objects.
-    """
-
-    splits: dict[str, RatingSplit] = field(default_factory=dict)
-
-    @classmethod
-    def from_dict(cls, data: Optional[dict]) -> "RatingSplits":
-        """
-        Create from API response dict.
-
-        :param data: Rating splits data from API (nested or flat format).
-        :returns: RatingSplits instance.
-        """
-        if not data:
-            return cls()
-
-        splits = {}
-        for key, value in data.items():
-            if isinstance(value, dict):
-                # Nested format: { "open": { "rating": "4.25", "abbr": "OP" } }
-                splits[key] = RatingSplit.from_dict(value)
-            elif isinstance(value, (int, float)):
-                # Flat format: { "VG": 4.25, "VM": 4.10 }
-                splits[key] = RatingSplit(rating=float(value), abbr=key)
-        return cls(splits=splits)
-
-    def get(self, category: str) -> Optional[float]:
-        """
-        Get rating for a category.
-
-        :param category: Category name (e.g., "open", "VG", "50_and_up").
-        :returns: Rating value or None if not found.
-        """
-        split = self.splits.get(category)
-        return split.rating if split else None
-
-    @property
-    def open(self) -> Optional[float]:
-        """Open division rating."""
-        return self.get("open") or self.get("VO")
-
-    @property
-    def gender(self) -> Optional[float]:
-        """Gender-specific rating (same gender doubles)."""
-        return self.get("gender") or self.get("VG")
-
-    @property
-    def mixed(self) -> Optional[float]:
-        """Mixed doubles rating."""
-        return self.get("mixed") or self.get("VM")
-
-    @property
-    def recreational(self) -> Optional[float]:
-        """Recreational rating."""
-        return self.get("recreational") or self.get("R")
-
-    @property
-    def singles(self) -> Optional[float]:
-        """Singles rating."""
-        return self.get("singles") or self.get("S")
-
-    @property
-    def best(self) -> Optional[float]:
-        """Best available verified rating."""
-        ratings = [s.rating for s in self.splits.values() if s.rating > 0]
-        return max(ratings) if ratings else None
-
-    def to_dict(self) -> dict:
-        """Convert to dict."""
-        return {k: {"rating": v.rating, "abbr": v.abbr} for k, v in self.splits.items()}
-
-    def __repr__(self) -> str:
-        parts = [f"{k}={v.rating:.2f}" for k, v in self.splits.items() if v.rating > 0]
-        return f"RatingSplits({', '.join(parts)})"
-
-
-@dataclass
-class Player:
-    """
-    A player in the Vairified system.
-
-    From public search, only limited data is available (display name, location, rating).
-    For full profile data, use :meth:`Vairified.get_member` with OAuth consent.
-
-    :ivar id: External player ID (vair_mem_xxx format).
-    :ivar display_name: Display name (First Name + Last Initial from search).
-    :ivar first_name: Player's first name (only from connected member).
-    :ivar last_name: Player's last name (only from connected member).
-    :ivar rating: Primary/overall rating (2.0-8.0).
-    :ivar is_vairified: Whether player is verified.
-    :ivar is_connected: Whether player has connected to your app.
-    :ivar rating_splits: Ratings by category (only from connected member).
-    :ivar city: City.
-    :ivar state: State code.
-    :ivar country: Country code.
+    Grouped into a sub-object rather than top-level booleans so that
+    inspection (``pprint``, ``repr``, JSON) keeps all ``is_*`` flags
+    visually clustered.
     """
 
-    id: str
-    rating: float
-    display_name: Optional[str] = None
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    is_vairified: bool = False
-    is_connected: bool = False
-    rating_splits: RatingSplits = field(default_factory=RatingSplits)
-    city: Optional[str] = None
-    state: Optional[str] = None
-    country: Optional[str] = None
-    _client: Optional["Vairified"] = field(default=None, repr=False)
+    model_config = _RESPONSE_CONFIG
+
+    is_vairified: bool = Field(alias="isVairified")
+    is_wheelchair: bool = Field(alias="isWheelchair")
+    is_ambassador: bool = Field(alias="isAmbassador")
+    is_rater: bool = Field(alias="isRater")
+    is_connected: bool = Field(alias="isConnected")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        flags = [
+            name
+            for name, value in (
+                ("vairified", self.is_vairified),
+                ("wheelchair", self.is_wheelchair),
+                ("ambassador", self.is_ambassador),
+                ("rater", self.is_rater),
+                ("connected", self.is_connected),
+            )
+            if value
+        ]
+        return f"<MemberStatus {' '.join(flags) or '(none)'}>"
+
+
+class Member(BaseModel):
+    """
+    A partner-facing player record.
+
+    Returned by :meth:`Vairified.members.get` (full detail, requires an
+    active OAuth connection) and :meth:`Vairified.members.search` (limited
+    detail for public search).
+
+    Rating data lives under :attr:`sport` — a dict keyed by sport code.
+    The backend returns only the sports the player has ratings in, or
+    only the sports requested via the ``?sport=`` query filter. Use
+    :meth:`rating_for` to fetch the primary rating for a specific sport
+    with a sensible default.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    member_id: int = Field(alias="memberId")
+    id: str | None = None
+    first_name: str = Field(alias="firstName")
+    last_name: str = Field(alias="lastName")
+    full_name: str = Field(alias="fullName")
+    display_name: str = Field(alias="displayName")
+    age: int | None = None
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
+    country: str | None = None
+    gender: Gender | None = None
+    status: MemberStatus
+    sport: dict[str, SportRating] = Field(default_factory=dict)
+    active_leagues: list[str] | None = Field(default=None, alias="activeLeagues")
+    email: str | None = None
+    granted_scopes: list[str] | None = Field(default=None, alias="grantedScopes")
+
+    # ---- Convenience properties ----
 
     @property
     def name(self) -> str:
-        """Full name (or display name if full name not available)."""
-        if self.first_name and self.last_name:
-            return f"{self.first_name} {self.last_name}".strip()
-        return self.display_name or ""
+        """Full name — alias for :attr:`full_name`, matching common usage."""
+        return self.full_name
 
     @property
-    def verified_rating(self) -> Optional[float]:
-        """Best verified rating."""
-        return self.rating_splits.best
+    def sports(self) -> list[str]:
+        """The list of sport codes this player has ratings in."""
+        return list(self.sport.keys())
 
-    @classmethod
-    def from_dict(cls, data: dict, client: Optional["Vairified"] = None) -> "Player":
+    def rating_for(self, sport: str = "pickleball") -> float | None:
         """
-        Create from API response dict.
+        Primary rating for a given sport.
 
-        Handles both search (limited data) and member (full data) formats.
+        :param sport: Sport code, defaults to ``"pickleball"``.
+        :returns: The primary rating value, or ``None`` if the player has
+            no ratings for that sport.
 
-        :param data: Player data from API.
-        :param client: Vairified client for back-reference.
-        :returns: Player instance.
+        Example::
+
+            member.rating_for()              # pickleball
+            member.rating_for("padel")       # padel
         """
-        # Search format uses displayName
-        if "displayName" in data:
-            # Public search format (limited data)
-            return cls(
-                id=data.get("id", ""),
-                display_name=data.get("displayName", ""),
-                rating=float(data.get("rating", 0.0)) if data.get("rating") else 0.0,
-                is_vairified=data.get("isVairified", False),
-                is_connected=data.get("isConnected", False),
-                city=data.get("city"),
-                state=data.get("state"),
-                country=data.get("country"),
-                _client=client,
+        sport_rating = self.sport.get(sport)
+        return sport_rating.rating if sport_rating else None
+
+    def split(
+        self,
+        key: str,
+        sport: str = "pickleball",
+    ) -> RatingSplit | None:
+        """
+        Get a specific rating split for a sport.
+
+        :param key: Split key, e.g. ``"overall-open"`` or ``"singles-12-13"``.
+        :param sport: Sport code, defaults to ``"pickleball"``.
+        """
+        sport_rating = self.sport.get(sport)
+        if sport_rating is None:
+            return None
+        return sport_rating.get(key)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        primary = next(iter(self.sport.values()), None)
+        if primary:
+            return (
+                f"<Member #{self.member_id} '{self.display_name}' "
+                f"rating={primary.rating:.3f} {primary.abbr}>"
             )
-        else:
-            # Member format (full data)
-            return cls(
-                id=data.get("id", ""),
-                first_name=data.get("firstName", ""),
-                last_name=data.get("lastName", ""),
-                rating=float(data.get("rating", 0.0)) if data.get("rating") else 0.0,
-                is_vairified=data.get("isVairified", False),
-                rating_splits=RatingSplits.from_dict(data.get("ratingSplits")),
-                city=data.get("city"),
-                state=data.get("state"),
-                country=data.get("country"),
-                _client=client,
-            )
-
-    def __str__(self) -> str:
-        verified = " ✓" if self.is_vairified else ""
-        return f"{self.name} ({self.rating:.2f}){verified}"
+        return f"<Member #{self.member_id} '{self.display_name}'>"
 
 
-@dataclass
-class Member(Player):
+# ---------------------------------------------------------------------------
+# Rating updates (webhook / polling)
+# ---------------------------------------------------------------------------
+
+
+class RatingUpdate(BaseModel):
     """
-    A member with full profile access (requires OAuth connection).
+    A single rating change notification.
 
-    Extends :class:`Player` with additional profile data and methods.
-    Only accessible for players who have connected their account via OAuth.
-
-    :ivar email: Email address (only if profile:email scope granted).
-    :ivar granted_scopes: List of scopes the player granted to your app.
+    Returned by :meth:`Vairified.members.rating_updates` (polling) and
+    delivered via webhook callbacks to partners that have registered a
+    webhook URL.
     """
 
-    email: Optional[str] = None
-    granted_scopes: list[str] = field(default_factory=list)
+    model_config = _RESPONSE_CONFIG
 
-    @classmethod
-    def from_dict(cls, data: dict, client: Optional["Vairified"] = None) -> "Member":
-        """
-        Create from API response dict.
-
-        :param data: Member data from API.
-        :param client: Vairified client for back-reference.
-        :returns: Member instance.
-        """
-        return cls(
-            id=data.get("id", ""),
-            first_name=data.get("firstName", ""),
-            last_name=data.get("lastName", ""),
-            email=data.get("email"),
-            rating=float(data.get("rating", 0.0)) if data.get("rating") else 0.0,
-            is_vairified=data.get("isVairified", False),
-            rating_splits=RatingSplits.from_dict(data.get("ratingSplits")),
-            city=data.get("city"),
-            state=data.get("state"),
-            country=data.get("country"),
-            granted_scopes=data.get("grantedScopes", []),
-            _client=client,
-        )
-
-    def has_scope(self, scope: str) -> bool:
-        """
-        Check if the player has granted a specific scope.
-
-        :param scope: Scope to check (e.g., 'profile:email', 'match:submit').
-        :returns: True if scope is granted.
-        """
-        return scope in self.granted_scopes
-
-    async def refresh(self) -> "Member":
-        """
-        Refresh member data from API.
-
-        :returns: Updated Member instance (self).
-        :raises RuntimeError: If not connected to client.
-        """
-        if not self._client:
-            raise RuntimeError("Member not connected to client")
-        updated = await self._client.get_member(self.id)
-        # Update all fields
-        for key, value in vars(updated).items():
-            if not key.startswith("_"):
-                setattr(self, key, value)
-        return self
-
-
-@dataclass
-class Match:
-    """
-    A match to submit to the Vairified Partner API.
-
-    For doubles matches, provide two player IDs per team. For singles,
-    provide one player ID per team.
-
-    :ivar event: Event/tournament name (required).
-    :ivar bracket: Bracket/division name (required).
-    :ivar date: Match date and time (required).
-    :ivar team1: Tuple of (player1_id, player2_id) or just (player1_id,) for singles.
-    :ivar team2: Tuple of (player1_id, player2_id) or just (player1_id,) for singles.
-    :ivar scores: List of (team1_score, team2_score) tuples for each game.
-    :ivar match_type: Match type (e.g., "SIDEOUT", "RALLY").
-    :ivar source: Match source (e.g., "CLUB", "TOURNAMENT").
-    :ivar location: Match location (optional).
-    :ivar identifier: Unique match identifier (auto-generated if not provided).
-
-    Example::
-
-        # Doubles match: 11-9, 11-7
-        match = Match(
-            event="Weekly League",
-            bracket="4.0 Doubles",
-            date=datetime.now(),
-            team1=("player1_id", "player2_id"),
-            team2=("player3_id", "player4_id"),
-            scores=[(11, 9), (11, 7)],
-        )
-
-        # Singles match: 11-8, 9-11, 11-6
-        match = Match(
-            event="Club Singles",
-            bracket="Open Singles",
-            date=datetime.now(),
-            team1=("player1_id",),
-            team2=("player2_id",),
-            scores=[(11, 8), (9, 11), (11, 6)],
-        )
-    """
-
-    event: str
-    bracket: str
-    date: datetime
-    team1: tuple[str, ...]
-    team2: tuple[str, ...]
-    scores: list[tuple[int, int]]
-    match_type: str = "SIDEOUT"
-    source: str = "PARTNER"
-    location: Optional[str] = None
-    identifier: Optional[str] = None
-    id: Optional[str] = None
-
-    def __post_init__(self):
-        """Generate identifier if not provided."""
-        if not self.identifier:
-            self.identifier = f"SDK-{uuid4().hex[:12]}"
+    member_id: int = Field(alias="memberId")
+    id: str | None = None
+    display_name: str | None = Field(default=None, alias="displayName")
+    sport: str | None = None
+    previous_rating: float | None = Field(default=None, alias="previousRating")
+    new_rating: float | None = Field(default=None, alias="newRating")
+    changed_at: str | None = Field(default=None, alias="changedAt")
+    rating_splits: dict[str, RatingSplit] | None = Field(
+        default=None, alias="ratingSplits"
+    )
 
     @property
-    def format(self) -> str:
-        """Match format: SINGLES or DOUBLES."""
-        return "SINGLES" if len(self.team1) == 1 else "DOUBLES"
-
-    @property
-    def winner(self) -> int:
-        """
-        Team that won (1 or 2).
-
-        :returns: 1 if team 1 won, 2 if team 2 won, 0 if tie.
-        """
-        t1_wins = sum(1 for s1, s2 in self.scores if s1 > s2)
-        t2_wins = sum(1 for s1, s2 in self.scores if s2 > s1)
-        if t1_wins > t2_wins:
-            return 1
-        elif t2_wins > t1_wins:
-            return 2
-        return 0
-
-    @property
-    def score_summary(self) -> str:
-        """Score summary like '11-9, 11-7'."""
-        return ", ".join(f"{s1}-{s2}" for s1, s2 in self.scores)
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert to API request format.
-
-        :returns: Dict matching the MatchInput DTO.
-        """
-        # Build team objects with embedded scores
-        team_a: dict[str, Any] = {"player1": self.team1[0]}
-        team_b: dict[str, Any] = {"player1": self.team2[0]}
-
-        if len(self.team1) > 1:
-            team_a["player2"] = self.team1[1]
-        if len(self.team2) > 1:
-            team_b["player2"] = self.team2[1]
-
-        # Add game scores to teams
-        for i, (s1, s2) in enumerate(self.scores[:5], start=1):
-            team_a[f"game{i}"] = s1
-            team_b[f"game{i}"] = s2
-
-        if isinstance(self.date, datetime):
-            match_date = self.date.isoformat()
-        else:
-            match_date = self.date
-        return {
-            "identifier": self.identifier,
-            "bracket": self.bracket,
-            "event": self.event,
-            "format": self.format,
-            "matchDate": match_date,
-            "matchSource": self.source,
-            "matchType": self.match_type,
-            "location": self.location,
-            "teamA": team_a,
-            "teamB": team_b,
-        }
-
-
-@dataclass
-class RatingUpdate:
-    """
-    A rating change notification.
-
-    :ivar id: External player ID (vair_mem_xxx format).
-    :ivar member_name: Member name.
-    :ivar previous_rating: Rating before change.
-    :ivar new_rating: Rating after change.
-    :ivar changed_at: When the change occurred.
-    :ivar rating_splits: Updated rating splits.
-    """
-
-    id: str
-    previous_rating: float
-    new_rating: float
-    changed_at: datetime
-    member_name: Optional[str] = None
-    rating_splits: RatingSplits = field(default_factory=RatingSplits)
-    _client: Optional["Vairified"] = field(default=None, repr=False)
-
-    @property
-    def change(self) -> float:
-        """Amount of rating change."""
+    def delta(self) -> float | None:
+        """Rating change amount. ``None`` when either rating is missing."""
+        if self.previous_rating is None or self.new_rating is None:
+            return None
         return self.new_rating - self.previous_rating
 
     @property
     def improved(self) -> bool:
-        """Whether rating improved."""
-        return self.change > 0
+        """True when the new rating is strictly higher than the previous."""
+        delta = self.delta
+        return delta is not None and delta > 0
 
-    @classmethod
-    def from_dict(
-        cls, data: dict, client: Optional["Vairified"] = None
-    ) -> "RatingUpdate":
-        """
-        Create from API response dict.
+    def __repr__(self) -> str:  # pragma: no cover
+        arrow = "↑" if self.improved else "↓"
+        prev = (
+            f"{self.previous_rating:.3f}"
+            if self.previous_rating is not None
+            else "?"
+        )
+        new = f"{self.new_rating:.3f}" if self.new_rating is not None else "?"
+        name = f" '{self.display_name}'" if self.display_name else ""
+        return f"<RatingUpdate #{self.member_id}{name} {prev} {arrow} {new}>"
 
-        :param data: Rating update data from API.
-        :param client: Vairified client for back-reference.
-        :returns: RatingUpdate instance.
-        """
-        changed_at = data.get("changedAt") or data.get("updatedAt", "")
-        if isinstance(changed_at, str) and changed_at:
-            changed_at = datetime.fromisoformat(changed_at.replace("Z", "+00:00"))
-        else:
-            changed_at = datetime.now()
 
-        return cls(
-            id=data.get("id", data.get("memberId", data.get("playerId", ""))),
-            member_name=data.get("memberName"),
-            previous_rating=data.get("previousRating", 0.0),
-            new_rating=data.get("newRating", 0.0),
-            changed_at=changed_at,
-            rating_splits=RatingSplits.from_dict(data.get("ratingSplits")),
-            _client=client,
+# ---------------------------------------------------------------------------
+# Match submission — request side (input models)
+# ---------------------------------------------------------------------------
+
+_REQUEST_CONFIG = ConfigDict(populate_by_name=True, extra="forbid")
+
+
+class Game(BaseModel):
+    """
+    One scored game within a :class:`Match`.
+
+    ``scores`` is one integer per team, in the same order as the parent
+    match's ``teams`` list. For a standard 2-team game ``scores`` is
+    ``[team1_score, team2_score]``. The API supports n-team matches by
+    setting a longer list.
+
+    All fields except ``scores`` are optional overrides of the parent
+    match's defaults — use them only when a specific game inside the
+    match differs from the rest (e.g. a championship game played to 15
+    when the rest of the match was to 11).
+    """
+
+    model_config = _REQUEST_CONFIG
+
+    scores: list[int]
+    identifier: str | None = None
+    win_score: int | None = Field(default=None, alias="winScore")
+    win_by: int | None = Field(default=None, alias="winBy")
+
+
+class Match(BaseModel):
+    """
+    One match to submit in a :class:`MatchBatch`.
+
+    A match has:
+
+    * ``teams`` — a list of teams, each a list of player IDs (external
+      ``vair_mem_xxx``, numeric member IDs, or UUIDs). Supports n-team
+      × n-player matches natively: ``[[p1, p2], [p3, p4]]`` for standard
+      doubles, ``[[p1], [p2]]`` for singles, ``[[p1], [p2], [p3]]``
+      for a 3-way round robin.
+    * ``games`` — one or more scored games (e.g. best-of-3 has 2 or 3
+      entries). Scores in each game are parallel to the ``teams`` order.
+
+    Every other field is an optional override of the parent
+    :class:`MatchBatch` default.
+    """
+
+    model_config = _REQUEST_CONFIG
+
+    identifier: str
+    teams: list[list[str]]
+    games: list[Game]
+
+    # Optional per-match overrides of batch-level defaults
+    sport: str | None = None
+    bracket: str | None = None
+    event: str | None = None
+    location: str | None = None
+    match_date: str | None = Field(default=None, alias="matchDate")
+    match_source: str | None = Field(default=None, alias="matchSource")
+    match_type: str | None = Field(default=None, alias="matchType")
+    win_score: int | None = Field(default=None, alias="winScore")
+    win_by: int | None = Field(default=None, alias="winBy")
+    extras: dict[str, Any] | None = None
+    original_id: str | None = Field(default=None, alias="originalId")
+    original_type: str | None = Field(default=None, alias="originalType")
+    club_id: int | None = Field(default=None, alias="clubId")
+
+    @property
+    def num_games(self) -> int:
+        """Number of scored games in this match (best-of-N count)."""
+        return len(self.games)
+
+    @property
+    def num_teams(self) -> int:
+        """Number of teams in this match."""
+        return len(self.teams)
+
+    def __repr__(self) -> str:  # pragma: no cover
+        shape = "×".join(str(len(t)) for t in self.teams)
+        return f"<Match {self.identifier!r} teams={shape} games={self.num_games}>"
+
+
+class MatchBatch(BaseModel):
+    """
+    Compressed bulk match submission.
+
+    Top-level fields are defaults applied to every match in the
+    :attr:`matches` list. Any match can override any field. ``sport``,
+    ``win_score``, and ``win_by`` are **required** at the batch level —
+    partners must tell the rater which sport the matches are in and what
+    the winning conditions were so scores can be interpreted correctly.
+
+    Example::
+
+        batch = MatchBatch(
+            sport="pickleball",
+            win_score=11,
+            win_by=2,
+            bracket="4.0 Doubles",
+            event="Weekly League",
+            match_date="2026-04-11T14:00:00Z",
+            matches=[
+                Match(
+                    identifier="m1",
+                    teams=[["vair_mem_aaa", "vair_mem_bbb"],
+                           ["vair_mem_ccc", "vair_mem_ddd"]],
+                    games=[Game(scores=[11, 8]),
+                           Game(scores=[11, 5])],
+                ),
+            ],
+        )
+        result = await client.matches.submit(batch)
+    """
+
+    model_config = _REQUEST_CONFIG
+
+    sport: str
+    win_score: int = Field(alias="winScore")
+    win_by: int = Field(alias="winBy")
+    matches: list[Match]
+
+    # Optional batch-level defaults inherited by every match
+    bracket: str | None = None
+    event: str | None = None
+    location: str | None = None
+    match_date: str | None = Field(default=None, alias="matchDate")
+    match_source: str | None = Field(default=None, alias="matchSource")
+    match_type: str | None = Field(default=None, alias="matchType")
+    extras: dict[str, Any] | None = None
+    identifier: str | None = None
+    original_id: str | None = Field(default=None, alias="originalId")
+    original_type: str | None = Field(default=None, alias="originalType")
+    club_id: int | None = Field(default=None, alias="clubId")
+    dry_run: bool | None = Field(default=None, alias="dryRun")
+
+    def __repr__(self) -> str:  # pragma: no cover
+        total_games = sum(m.num_games for m in self.matches)
+        return (
+            f"<MatchBatch sport={self.sport!r} "
+            f"matches={len(self.matches)} games={total_games}>"
         )
 
-    async def get_member(self) -> Member:
-        """
-        Fetch the member associated with this update.
 
-        :returns: Member object.
-        :raises RuntimeError: If not connected to client.
-        """
-        if not self._client:
-            raise RuntimeError("Update not connected to client")
-        return await self._client.get_member(self.id)
-
-    def __str__(self) -> str:
-        direction = "↑" if self.improved else "↓"
-        name = f" ({self.member_name})" if self.member_name else ""
-        prev, new = self.previous_rating, self.new_rating
-        return f"{self.id}{name}: {prev:.2f} {direction} {new:.2f}"
+# ---------------------------------------------------------------------------
+# Match submission — response side
+# ---------------------------------------------------------------------------
 
 
-@dataclass
-class MatchResult:
+class MatchBatchResult(BaseModel):
     """
-    Result of a match submission.
+    Result of a :meth:`Vairified.matches.submit` call.
 
-    :ivar success: Whether submission succeeded.
-    :ivar num_matches: Number of matches processed.
-    :ivar num_games: Number of games recorded.
-    :ivar dry_run: Whether this was a dry-run (validation only).
-    :ivar message: Human-readable result message.
-    :ivar errors: List of validation/processing errors.
+    ``success`` is ``True`` only when every match in the batch was
+    accepted. Check :attr:`errors` for per-match validation failures.
     """
+
+    model_config = _RESPONSE_CONFIG
 
     success: bool
-    num_matches: int
-    num_games: int
-    dry_run: bool = False
-    message: Optional[str] = None
-    errors: list[str] = field(default_factory=list)
+    num_matches: int = Field(alias="numMatches")
+    num_games: int = Field(alias="numGames")
+    dry_run: bool | None = Field(default=None, alias="dryRun")
+    message: str | None = None
+    errors: list[str] | None = None
 
-    @classmethod
-    def from_dict(cls, data: dict) -> "MatchResult":
-        """
-        Create from API response dict.
-
-        :param data: Match result data from API.
-        :returns: MatchResult instance.
-        """
-        return cls(
-            success=data.get("success", False),
-            num_matches=data.get("numMatches", 0),
-            num_games=data.get("numGames", 0),
-            dry_run=data.get("dryRun", False),
-            message=data.get("message"),
-            errors=data.get("errors", []),
-        )
+    @property
+    def ok(self) -> bool:
+        """Shorthand: successful submission with zero errors."""
+        return self.success and not self.errors
 
     @property
     def is_dry_run(self) -> bool:
-        """Alias for dry_run."""
-        return self.dry_run
+        """Whether this was a dry-run (validation only, nothing persisted)."""
+        return bool(self.dry_run)
 
-    def __bool__(self) -> bool:
-        return self.success and not self.errors
-
-
-@dataclass
-class SearchResults:
-    """
-    Paginated search results.
-
-    Supports iteration and async pagination.
-
-    :ivar players: List of Player objects.
-    :ivar total: Total matching players.
-    :ivar page: Current page number.
-    :ivar limit: Results per page.
-    """
-
-    players: list[Player]
-    total: int
-    page: int
-    limit: int
-    _client: Optional["Vairified"] = field(default=None, repr=False)
-    _filters: dict = field(default_factory=dict, repr=False)
-
-    @property
-    def has_more(self) -> bool:
-        """Whether more results are available."""
-        return (self.page * self.limit) < self.total
-
-    @property
-    def pages(self) -> int:
-        """Total number of pages."""
-        if self.limit <= 0:
-            return 0
-        return (self.total + self.limit - 1) // self.limit
-
-    def __iter__(self):
-        return iter(self.players)
-
-    def __len__(self) -> int:
-        return len(self.players)
-
-    def __getitem__(self, index: int) -> Player:
-        return self.players[index]
-
-    def __bool__(self) -> bool:
-        return len(self.players) > 0
-
-    async def next_page(self) -> "SearchResults":
-        """
-        Fetch next page of results.
-
-        :returns: SearchResults for the next page.
-        :raises RuntimeError: If not connected to client.
-        :raises StopIteration: If no more pages.
-        """
-        if not self._client:
-            raise RuntimeError("Results not connected to client")
-        if not self.has_more:
-            raise StopIteration("No more pages")
-
-        filters = self._filters.copy()
-        filters["page"] = self.page + 1
-        return await self._client.search(**filters)
-
-    @classmethod
-    def from_dict(
-        cls,
-        data: dict,
-        client: Optional["Vairified"] = None,
-        filters: Optional[dict] = None,
-    ) -> "SearchResults":
-        """
-        Create from API response dict.
-
-        :param data: Search results data from API.
-        :param client: Vairified client for back-reference.
-        :param filters: Original search filters for pagination.
-        :returns: SearchResults instance.
-        """
-        players = [Player.from_dict(p, client) for p in data.get("players", [])]
-        return cls(
-            players=players,
-            total=data.get("total", len(players)),
-            page=data.get("page", 1),
-            limit=data.get("limit", 20),
-            _client=client,
-            _filters=filters or {},
+    def __repr__(self) -> str:  # pragma: no cover
+        mode = " [dry-run]" if self.dry_run else ""
+        errs = f" errors={len(self.errors)}" if self.errors else ""
+        return (
+            f"<MatchBatchResult {'ok' if self.ok else 'FAILED'}{mode} "
+            f"matches={self.num_matches} games={self.num_games}{errs}>"
         )
+
+
+# ---------------------------------------------------------------------------
+# Search filters (request-side)
+# ---------------------------------------------------------------------------
+
+
+class SearchFilters(BaseModel):
+    """
+    Filters accepted by :meth:`Vairified.members.search`.
+
+    Most users won't construct this directly — the ``search()`` method
+    accepts keyword arguments and builds it internally. But it's exposed
+    so you can inspect the full set of available filters in one place.
+    """
+
+    model_config = _REQUEST_CONFIG
+
+    # Multi-sport filter — comma-separated list of sport codes. When
+    # omitted, the server returns every sport each player has ratings in.
+    sport: str | None = None
+
+    # Name / ID — partial match on first/last name, or exact numeric memberId
+    member: str | None = None
+
+    # Location filters
+    location: str | None = None
+    country: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
+
+    # Age filters
+    age_filter_type: str | None = Field(default=None, alias="ageFilterType")
+    age1: int | None = None
+    age2: int | None = None
+
+    # Gender + verified
+    gender: str | None = None
+    wheelchair: bool | None = None
+    vairified: bool | None = None
+
+    # Rating range
+    rating1: float | None = None
+    rating2: float | None = None
+
+    # Sort + pagination
+    sort_field: str | None = Field(default=None, alias="sortField")
+    sort_direction: str | None = Field(default=None, alias="sortDirection")
+    offset: int | None = None
+    limit: int | None = None
+
+    def to_query_params(self) -> dict[str, Any]:
+        """Serialize to the wire-format dict expected by httpx params=."""
+        return self.model_dump(by_alias=True, exclude_none=True)
+
+
+__all__ = [
+    "Gender",
+    "Game",
+    "Match",
+    "MatchBatch",
+    "MatchBatchResult",
+    "Member",
+    "MemberStatus",
+    "RatingSplit",
+    "RatingUpdate",
+    "SearchFilters",
+    "SportRating",
+]
