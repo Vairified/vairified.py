@@ -126,9 +126,7 @@ class SportRating(BaseModel):
         """Split keys (e.g. ``"overall-open"``, ``"singles-12-13"``)."""
         return self.rating_splits.keys()
 
-    def get(
-        self, key: str, default: RatingSplit | None = None
-    ) -> RatingSplit | None:
+    def get(self, key: str, default: RatingSplit | None = None) -> RatingSplit | None:
         """Dict-style safe lookup."""
         return self.rating_splits.get(key, default)
 
@@ -308,9 +306,7 @@ class RatingUpdate(BaseModel):
     def __repr__(self) -> str:  # pragma: no cover
         arrow = "↑" if self.improved else "↓"
         prev = (
-            f"{self.previous_rating:.3f}"
-            if self.previous_rating is not None
-            else "?"
+            f"{self.previous_rating:.3f}" if self.previous_rating is not None else "?"
         )
         new = f"{self.new_rating:.3f}" if self.new_rating is not None else "?"
         name = f" '{self.display_name}'" if self.display_name else ""

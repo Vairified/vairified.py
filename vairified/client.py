@@ -370,8 +370,8 @@ class MembersResource(_Resource):
         :param max_results: Optional cap on total results to iterate.
         """
         # Build the filter model so we serialize consistently.
-        sport_param = sport if isinstance(sport, str) else (
-            ",".join(sport) if sport else None
+        sport_param = (
+            sport if isinstance(sport, str) else (",".join(sport) if sport else None)
         )
         member_param: str | None
         if member_id is not None:
@@ -433,8 +433,10 @@ class MembersResource(_Resource):
             )
 
             # Partner API returns a plain list of results.
-            batch: list[dict[str, Any]] = data if isinstance(data, list) else (
-                data.get("players", []) if isinstance(data, dict) else []
+            batch: list[dict[str, Any]] = (
+                data
+                if isinstance(data, list)
+                else (data.get("players", []) if isinstance(data, dict) else [])
             )
 
             if not batch:
@@ -569,9 +571,7 @@ class OAuthResource(_Resource):
 
         for scope in scope_list:
             if scope not in SCOPES:
-                raise OAuthError(
-                    f"Invalid scope: {scope}", error_code="invalid_scope"
-                )
+                raise OAuthError(f"Invalid scope: {scope}", error_code="invalid_scope")
 
         data = await self._client._request(
             "POST",

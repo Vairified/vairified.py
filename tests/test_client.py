@@ -149,9 +149,7 @@ class TestMembersResource:
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
-            await client.members.get(
-                "vair_mem_xxx", sport=["pickleball", "padel"]
-            )
+            await client.members.get("vair_mem_xxx", sport=["pickleball", "padel"])
 
         assert route.calls.last.request.url.params["sport"] == "pickleball,padel"
 
