@@ -14,9 +14,12 @@ from vairified import (
     Member,
     NotFoundError,
     RateLimitError,
+    TournamentImportResult,
     Vairified,
     VairifiedError,
     ValidationError,
+    WebhookDeliveriesResult,
+    WebhookDelivery,
 )
 from vairified.client import _raise_from_response
 from vairified.errors import OAuthError
@@ -437,3 +440,272 @@ class TestModelEdgeCases:
             {"success": True, "numMatches": 1, "numGames": 2}
         )
         assert result_live.is_dry_run is False
+
+
+# ---------------------------------------------------------------------------
+# members.get_bulk()
+# ---------------------------------------------------------------------------
+
+
+class TestGetBulk:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_get_bulk(self, api_key, base_url):
+        route = respx.get(f"{base_url}/partner/members").mock(
+            return_value=Response(
+                200,
+                json=[
+                    _member_payload(memberId=1, fullName="A A", displayName="A"),
+                    _member_payload(memberId=2, fullName="B B", displayName="B"),
+                ],
+            )
+        )
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            members = await client.members.get_bulk([1, 2])
+        assert len(members) == 2
+        assert members[0].member_id == 1
+        assert members[1].member_id == 2
+        assert route.calls.last.request.url.params["ids"] == "1,2"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_get_bulk_with_sport(self, api_key, base_url):
+        route = respx.get(f"{base_url}/partner/members").mock(
+            return_value=Response(200, json=[_member_payload(memberId=5)])
+        )
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            members = await client.members.get_bulk([5], sport="pickleball")
+        assert len(members) == 1
+        assert route.calls.last.request.url.params["sport"] == "pickleball"
+
+    @pytest.mark.asyncio
+    async def test_get_bulk_over_100_raises(self, api_key, base_url):
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(ValueError, match="Maximum 100"):
+                await client.members.get_bulk(list(range(101)))
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_get_bulk_non_list_response(self, api_key, base_url):
+        """Server returning a non-list should yield an empty list."""
+        respx.get(f"{base_url}/partner/members").mock(
+            return_value=Response(200, json={"unexpected": "shape"})
+        )
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            members = await client.members.get_bulk([1])
+        assert members == []
+
+
+# ---------------------------------------------------------------------------
+# matches.tournament_import()
+# ---------------------------------------------------------------------------
+
+
+class TestTournamentImport:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_tournament_import(self, api_key, base_url):
+        route = respx.post(f"{base_url}/partner/tournament-import").mock(
+            return_value=Response(
+                200,
+                json={
+                    "success": True,
+                    "matchesImported": 5,
+                    "gamesRecorded": 12,
+                    "ghostPlayersCreated": 2,
+                    "existingPlayersMatched": 8,
+                    "dryRun": False,
+                    "message": "Import complete",
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.matches.tournament_import(
+                {
+                    "tournamentName": "Austin Open 2026",
+                    "sport": "pickleball",
+                    "winScore": 11,
+                    "winBy": 2,
+                    "matches": [],
+                }
+            )
+
+        assert isinstance(result, TournamentImportResult)
+        assert result.success is True
+        assert result.matches_imported == 5
+        assert result.games_recorded == 12
+        assert result.ghost_players_created == 2
+        assert result.existing_players_matched == 8
+        assert result.dry_run is False
+        assert result.message == "Import complete"
+        assert result.errors is None
+        assert b"Austin Open 2026" in route.calls.last.request.content
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_tournament_import_with_errors(self, api_key, base_url):
+        respx.post(f"{base_url}/partner/tournament-import").mock(
+            return_value=Response(
+                200,
+                json={
+                    "success": False,
+                    "matchesImported": 3,
+                    "gamesRecorded": 6,
+                    "ghostPlayersCreated": 0,
+                    "existingPlayersMatched": 5,
+                    "errors": ["Match 4: invalid format", "Match 5: missing teams"],
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.matches.tournament_import({"matches": []})
+
+        assert result.success is False
+        assert result.errors is not None
+        assert len(result.errors) == 2
+
+    def test_tournament_import_result_model(self):
+        result = TournamentImportResult.model_validate(
+            {
+                "success": True,
+                "matchesImported": 1,
+                "gamesRecorded": 2,
+                "ghostPlayersCreated": 0,
+                "existingPlayersMatched": 1,
+                "dryRun": True,
+            }
+        )
+        assert result.dry_run is True
+        assert result.message is None
+        assert result.errors is None
+
+
+# ---------------------------------------------------------------------------
+# webhooks.deliveries()
+# ---------------------------------------------------------------------------
+
+
+def _delivery_payload(**overrides):
+    payload = {
+        "id": "del_001",
+        "event": "rating.updated",
+        "url": "https://hook.example.com/webhook",
+        "statusCode": 200,
+        "responseBody": '{"ok": true}',
+        "errorMessage": None,
+        "attempts": 1,
+        "maxAttempts": 3,
+        "lastAttemptAt": "2026-04-12T10:00:00Z",
+        "nextRetryAt": None,
+        "completedAt": "2026-04-12T10:00:00Z",
+        "createdAt": "2026-04-12T09:59:00Z",
+        "payload": {"memberId": 123, "newRating": 4.5},
+    }
+    payload.update(overrides)
+    return payload
+
+
+class TestWebhookDeliveries:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_deliveries_defaults(self, api_key, base_url):
+        route = respx.get(f"{base_url}/partner/webhook-deliveries").mock(
+            return_value=Response(
+                200,
+                json={
+                    "deliveries": [_delivery_payload()],
+                    "total": 1,
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.webhooks.deliveries()
+
+        assert isinstance(result, WebhookDeliveriesResult)
+        assert result.total == 1
+        assert len(result.deliveries) == 1
+
+        d = result.deliveries[0]
+        assert isinstance(d, WebhookDelivery)
+        assert d.id == "del_001"
+        assert d.event == "rating.updated"
+        assert d.url == "https://hook.example.com/webhook"
+        assert d.status_code == 200
+        assert d.response_body == '{"ok": true}'
+        assert d.error_message is None
+        assert d.attempts == 1
+        assert d.max_attempts == 3
+        assert d.last_attempt_at == "2026-04-12T10:00:00Z"
+        assert d.next_retry_at is None
+        assert d.completed_at == "2026-04-12T10:00:00Z"
+        assert d.created_at == "2026-04-12T09:59:00Z"
+        assert d.payload == {"memberId": 123, "newRating": 4.5}
+
+        params = route.calls.last.request.url.params
+        assert params["limit"] == "20"
+        assert params["offset"] == "0"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_deliveries_with_filters(self, api_key, base_url):
+        route = respx.get(f"{base_url}/partner/webhook-deliveries").mock(
+            return_value=Response(
+                200,
+                json={"deliveries": [], "total": 0},
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.webhooks.deliveries(
+                event="rating.updated",
+                status="failed",
+                limit=50,
+                offset=10,
+            )
+
+        assert result.total == 0
+        assert result.deliveries == []
+
+        params = route.calls.last.request.url.params
+        assert params["event"] == "rating.updated"
+        assert params["status"] == "failed"
+        assert params["limit"] == "50"
+        assert params["offset"] == "10"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_deliveries_no_optional_filters(self, api_key, base_url):
+        """When event and status are omitted, they shouldn't appear in params."""
+        route = respx.get(f"{base_url}/partner/webhook-deliveries").mock(
+            return_value=Response(
+                200,
+                json={"deliveries": [], "total": 0},
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.webhooks.deliveries()
+
+        params = route.calls.last.request.url.params
+        assert "event" not in params
+        assert "status" not in params
+
+    def test_webhook_delivery_model(self):
+        d = WebhookDelivery.model_validate(_delivery_payload())
+        assert d.id == "del_001"
+        assert d.event == "rating.updated"
+        assert d.attempts == 1
+
+    def test_webhook_deliveries_result_model(self):
+        result = WebhookDeliveriesResult.model_validate(
+            {
+                "deliveries": [_delivery_payload(), _delivery_payload(id="del_002")],
+                "total": 2,
+            }
+        )
+        assert result.total == 2
+        assert len(result.deliveries) == 2
+        assert result.deliveries[1].id == "del_002"

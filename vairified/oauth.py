@@ -14,26 +14,26 @@ from urllib.parse import urlencode
 #: OAuth server accepts. Use this type in your own signatures to get
 #: autocomplete and type-checking for the scope strings you pass.
 OAuthScope = Literal[
-    "profile:read",
-    "profile:email",
-    "rating:read",
-    "rating:history",
-    "match:submit",
-    "webhook:subscribe",
+    "user:profile:read",
+    "user:profile:email",
+    "user:rating:read",
+    "user:rating:history",
+    "user:match:submit",
+    "user:webhook:subscribe",
 ]
 
 # Available OAuth scopes
 SCOPES: dict[str, str] = {
-    "profile:read": "Access your name, location, and verification status",
-    "profile:email": "Access your email address",
-    "rating:read": "View your current rating and rating splits",
-    "rating:history": "View your complete rating history",
-    "match:submit": "Submit match results on your behalf",
-    "webhook:subscribe": "Receive notifications when your rating changes",
+    "user:profile:read": "Access your name, location, and verification status",
+    "user:profile:email": "Access your email address",
+    "user:rating:read": "View your current rating and rating splits",
+    "user:rating:history": "View your complete rating history",
+    "user:match:submit": "Submit match results on your behalf",
+    "user:webhook:subscribe": "Receive notifications when your rating changes",
 }
 
 # Default scopes requested
-DEFAULT_SCOPES: list[OAuthScope] = ["profile:read", "rating:read"]
+DEFAULT_SCOPES: list[OAuthScope] = ["user:profile:read", "user:rating:read"]
 
 
 @dataclass
@@ -107,15 +107,17 @@ def get_authorization_url(
             api_key="vair_pk_xxx",
             redirect_uri="https://myapp.com/oauth/callback",
         )
-        url = get_authorization_url(config, scopes=["profile:read", "rating:read"])
+        url = get_authorization_url(
+            config, scopes=["user:profile:read", "user:rating:read"]
+        )
         # Redirect user to this URL
     """
     if scopes is None:
         scopes = DEFAULT_SCOPES
 
-    # Ensure profile:read is always included
-    if "profile:read" not in scopes:
-        scopes = ["profile:read"] + scopes
+    # Ensure user:profile:read is always included
+    if "user:profile:read" not in scopes:
+        scopes = ["user:profile:read"] + scopes
 
     params = {
         "redirect_uri": config.redirect_uri,

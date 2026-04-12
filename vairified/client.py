@@ -34,17 +34,18 @@ Usage::
 
 Sub-resources:
 
-* :attr:`Vairified.members` — get/search/rating_updates
-* :attr:`Vairified.matches` — submit bulk match batches
+* :attr:`Vairified.members` — get/search/get_bulk/rating_updates
+* :attr:`Vairified.matches` — submit batch, tournament_import
 * :attr:`Vairified.oauth` — OAuth authorization flow
 * :attr:`Vairified.leaderboard` — leaderboard queries
+* :attr:`Vairified.webhooks` — webhook delivery inspection
 * :attr:`Vairified.usage` — API usage stats (method: ``await client.usage()``)
 """
 
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -62,6 +63,8 @@ from vairified.models import (
     Member,
     RatingUpdate,
     SearchFilters,
+    TournamentImportResult,
+    WebhookDeliveriesResult,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
@@ -151,6 +154,7 @@ class Vairified:
         self.matches = MatchesResource(self)
         self.oauth = OAuthResource(self)
         self.leaderboard = LeaderboardResource(self)
+        self.webhooks = WebhooksResource(self)
 
     # ---- Context manager ----
 
@@ -460,7 +464,7 @@ class MembersResource(_Resource):
         Returns a list of :class:`RatingUpdate` objects for every player
         whose rating has changed since the last poll. Members are
         considered "subscribed" when they have an active OAuth
-        connection with the ``webhook:subscribe`` scope.
+        connection with the ``user:webhook:subscribe`` scope.
         """
         data = await self._client._request("GET", "/partner/rating-updates")
         if not isinstance(data, dict):
@@ -481,6 +485,37 @@ class MembersResource(_Resource):
             return member
         return None
 
+    async def get_bulk(
+        self,
+        ids: Sequence[int],
+        *,
+        sport: str | None = None,
+    ) -> list[Member]:
+        """
+        Fetch up to 100 members by their member IDs in one call.
+
+        :param ids: Sequence of integer member IDs (max 100).
+        :param sport: Optional sport code to filter ratings.
+        :returns: List of :class:`Member` objects. Unknown IDs are
+            silently omitted -- the list may be shorter than *ids*.
+        :raises ValueError: If more than 100 IDs are provided.
+
+        Example::
+
+            members = await client.members.get_bulk([4873327, 4873328])
+            for m in members:
+                print(m.name, m.rating_for("pickleball"))
+        """
+        if len(ids) > 100:
+            raise ValueError("Maximum 100 member IDs per request")
+        params: dict[str, str] = {"ids": ",".join(str(i) for i in ids)}
+        if sport:
+            params["sport"] = sport
+        rows = await self._client._request("GET", "/partner/members", params=params)
+        if not isinstance(rows, list):
+            return []
+        return [Member.model_validate(row) for row in rows]
+
 
 class MatchesResource(_Resource):
     """Match submission — one call submits a full batch."""
@@ -489,9 +524,9 @@ class MatchesResource(_Resource):
         """
         Submit a :class:`MatchBatch` for rating calculation.
 
-        All players in every match must have granted the ``match:submit``
+        All players in every match must have granted the ``user:match:submit``
         scope via OAuth (unless your API key has the
-        ``match:submit:trusted`` scope, which skips per-player consent).
+        ``user:match:submit:trusted`` scope, which skips per-player consent).
 
         Set ``batch.dry_run = True`` to validate without persisting.
 
@@ -520,6 +555,40 @@ class MatchesResource(_Resource):
         body = batch.model_dump(by_alias=True, exclude_none=True)
         data = await self._client._request("POST", "/partner/matches", json=body)
         return MatchBatchResult.model_validate(data)
+
+    async def tournament_import(
+        self,
+        body: dict[str, Any],
+    ) -> TournamentImportResult:
+        """
+        Import tournament results with automatic player matching.
+
+        Players are matched by email first, then name+location. Unmatched
+        players become ghost accounts that can be claimed later.
+
+        :param body: Tournament data dict with keys:
+            ``tournamentName``, ``sport``, ``winScore``, ``winBy``,
+            ``matches`` (list of match dicts with ``identifier``,
+            ``event``, ``bracket``, ``format``, ``matchDate``,
+            ``teamA``, ``teamB``).
+        :returns: :class:`TournamentImportResult` with counts.
+        :raises ValidationError: If the payload is malformed.
+
+        Example::
+
+            result = await client.matches.tournament_import({
+                "tournamentName": "Austin Open 2026",
+                "sport": "pickleball",
+                "winScore": 11,
+                "winBy": 2,
+                "matches": [...]
+            })
+            print(f"Imported {result.matches_imported} matches")
+        """
+        data = await self._client._request(
+            "POST", "/partner/tournament-import", json=body
+        )
+        return TournamentImportResult.model_validate(data)
 
     async def test_webhook(self, webhook_url: str) -> dict[str, Any]:
         """Send a test payload to a webhook URL."""
@@ -558,7 +627,7 @@ class OAuthResource(_Resource):
 
         :param redirect_uri: Your application's callback URL.
         :param scopes: Scopes to request. Defaults to
-            ``["profile:read", "rating:read"]``. ``profile:read`` is
+            ``["user:profile:read", "user:rating:read"]``. ``user:profile:read`` is
             always added if missing.
         :param state: CSRF protection token — persist and verify on callback.
         :raises OAuthError: If a requested scope is invalid.
@@ -566,8 +635,8 @@ class OAuthResource(_Resource):
         from vairified.errors import OAuthError  # local import to avoid cycle
 
         scope_list: list[str] = [*(scopes or DEFAULT_SCOPES)]
-        if "profile:read" not in scope_list:
-            scope_list = ["profile:read", *scope_list]
+        if "user:profile:read" not in scope_list:
+            scope_list = ["user:profile:read", *scope_list]
 
         for scope in scope_list:
             if scope not in SCOPES:
@@ -698,6 +767,44 @@ class LeaderboardResource(_Resource):
         return data or {}
 
 
+class WebhooksResource(_Resource):
+    """Webhook delivery inspection."""
+
+    async def deliveries(
+        self,
+        *,
+        event: str | None = None,
+        status: str | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> WebhookDeliveriesResult:
+        """
+        List recent webhook delivery attempts.
+
+        :param event: Filter by event type (e.g. ``"rating.updated"``).
+        :param status: Filter: ``"all"``, ``"pending"``, ``"success"``,
+            or ``"failed"``.
+        :param limit: Results per page (1-100, default 20).
+        :param offset: Pagination offset.
+        :returns: :class:`WebhookDeliveriesResult` with entries and total.
+
+        Example::
+
+            result = await client.webhooks.deliveries(status="failed")
+            for d in result.deliveries:
+                print(d.event, d.status_code, d.error_message)
+        """
+        params: dict[str, str | int] = {"limit": limit, "offset": offset}
+        if event:
+            params["event"] = event
+        if status:
+            params["status"] = status
+        data = await self._client._request(
+            "GET", "/partner/webhook-deliveries", params=params
+        )
+        return WebhookDeliveriesResult.model_validate(data)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -723,4 +830,5 @@ __all__ = [
     "MembersResource",
     "OAuthResource",
     "Vairified",
+    "WebhooksResource",
 ]

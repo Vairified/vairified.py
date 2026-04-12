@@ -53,10 +53,11 @@ Sub-resources
 
 Every operation lives on a sub-resource that mirrors the REST path:
 
-- ``client.members`` — ``get``, ``search``, ``find``, ``rating_updates``
-- ``client.matches`` — ``submit``, ``test_webhook``
+- ``client.members`` — ``get``, ``get_bulk``, ``search``, ``find``, ``rating_updates``
+- ``client.matches`` — ``submit``, ``tournament_import``, ``test_webhook``
 - ``client.oauth`` — ``authorize``, ``exchange_token``, ``refresh``, ``revoke``
 - ``client.leaderboard`` — ``list``, ``rank``, ``categories``
+- ``client.webhooks`` — ``deliveries``
 - ``client.usage()`` — rate-limit and request-count stats
 
 Get a member
@@ -165,7 +166,7 @@ Connect players to your application with OAuth:
        state = secrets.token_urlsafe(32)
        auth = await client.oauth.authorize(
            redirect_uri="https://your-app.com/callback",
-           scopes=["profile:read", "rating:read"],
+           scopes=["user:profile:read", "user:rating:read"],
            state=state,
        )
        # Redirect the user to auth.authorization_url

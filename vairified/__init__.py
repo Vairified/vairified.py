@@ -47,6 +47,7 @@ from vairified.client import (
     MembersResource,
     OAuthResource,
     Vairified,
+    WebhooksResource,
 )
 from vairified.errors import (
     AuthenticationError,
@@ -68,6 +69,9 @@ from vairified.models import (
     RatingUpdate,
     SearchFilters,
     SportRating,
+    TournamentImportResult,
+    WebhookDeliveriesResult,
+    WebhookDelivery,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
@@ -82,7 +86,7 @@ from vairified.oauth import (
     validate_scope,
 )
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     # Version
@@ -94,6 +98,7 @@ __all__ = [
     "MatchesResource",
     "MembersResource",
     "OAuthResource",
+    "WebhooksResource",
     # Response models
     "Gender",
     "Member",
@@ -101,6 +106,9 @@ __all__ = [
     "RatingSplit",
     "RatingUpdate",
     "SportRating",
+    "TournamentImportResult",
+    "WebhookDelivery",
+    "WebhookDeliveriesResult",
     # Request models
     "Game",
     "Match",

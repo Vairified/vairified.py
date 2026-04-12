@@ -354,7 +354,7 @@ Rating Updates
 --------------
 
 Poll for rating change notifications for players who have subscribed
-via the ``webhook:subscribe`` OAuth scope:
+via the ``user:webhook:subscribe`` OAuth scope:
 
 .. code-block:: python
 
@@ -411,7 +411,7 @@ Step 1 — Start authorization
        state = secrets.token_urlsafe(32)   # CSRF token
        auth = await client.oauth.authorize(
            redirect_uri="https://your-app.com/callback",
-           scopes=["profile:read", "rating:read", "match:submit"],
+           scopes=["user:profile:read", "user:rating:read", "user:match:submit"],
            state=state,
        )
 
@@ -426,24 +426,24 @@ string, so your editor and type checker catch typos:
    from vairified import OAuthScope
 
    scopes: list[OAuthScope] = [
-       "profile:read",
-       "rating:read",
-       "match:submit",
+       "user:profile:read",
+       "user:rating:read",
+       "user:match:submit",
    ]
 
 Available scopes
 """"""""""""""""
 
-=====================  ==============================================
-Scope                  Description
-=====================  ==============================================
-``profile:read``       Name, location, verification status (required)
-``profile:email``      Email address
-``rating:read``        Current rating and rating splits
-``rating:history``     Complete rating history
-``match:submit``       Submit matches on player's behalf
-``webhook:subscribe``  Receive rating change notifications
-=====================  ==============================================
+============================  ==============================================
+Scope                         Description
+============================  ==============================================
+``user:profile:read``         Name, location, verification status (required)
+``user:profile:email``        Email address
+``user:rating:read``          Current rating and rating splits
+``user:rating:history``       Complete rating history
+``user:match:submit``         Submit matches on player's behalf
+``user:webhook:subscribe``    Receive rating change notifications
+============================  ==============================================
 
 Step 2 — Exchange the code
 ^^^^^^^^^^^^^^^^^^^^^^^^^^

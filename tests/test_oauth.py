@@ -33,7 +33,7 @@ class TestOAuthHelpers:
         assert validate_scope("") is False
 
     def test_describe_scope_known(self):
-        assert "verification" in describe_scope("profile:read").lower()
+        assert "verification" in describe_scope("user:profile:read").lower()
 
     def test_describe_scope_unknown(self):
         description = describe_scope("foo:bar")
@@ -41,16 +41,16 @@ class TestOAuthHelpers:
         assert "foo:bar" in description
 
     def test_describe_scopes_returns_list_of_dicts(self):
-        result = describe_scopes(["profile:read", "rating:read"])
+        result = describe_scopes(["user:profile:read", "user:rating:read"])
         assert len(result) == 2
         assert result[0] == {
-            "scope": "profile:read",
-            "description": SCOPES["profile:read"],
+            "scope": "user:profile:read",
+            "description": SCOPES["user:profile:read"],
         }
-        assert result[1]["scope"] == "rating:read"
+        assert result[1]["scope"] == "user:rating:read"
 
     def test_default_scopes_include_profile_read(self):
-        assert "profile:read" in DEFAULT_SCOPES
+        assert "user:profile:read" in DEFAULT_SCOPES
 
 
 class TestGetAuthorizationUrl:
@@ -65,17 +65,17 @@ class TestGetAuthorizationUrl:
         url = get_authorization_url(self._config())
         assert url.startswith("https://api.example.com/api/v1/partner/oauth/authorize?")
         assert "redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback" in url
-        assert "scope=profile%3Aread%2Crating%3Aread" in url
+        assert "scope=user%3Aprofile%3Aread%2Cuser%3Arating%3Aread" in url
         assert "response_type=code" in url
 
     def test_custom_scopes(self):
         url = get_authorization_url(
             self._config(),
-            scopes=["rating:read", "match:submit"],
+            scopes=["user:rating:read", "user:match:submit"],
         )
-        # profile:read should be auto-prepended.
-        assert "profile%3Aread" in url
-        assert "match%3Asubmit" in url
+        # user:profile:read should be auto-prepended.
+        assert "user%3Aprofile%3Aread" in url
+        assert "user%3Amatch%3Asubmit" in url
 
     def test_state_param_included(self):
         url = get_authorization_url(self._config(), state="csrf-token-xyz")
@@ -108,7 +108,7 @@ class TestOAuthResource:
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             auth = await client.oauth.authorize(
                 redirect_uri="https://app.example.com/callback",
-                scopes=["rating:read"],
+                scopes=["user:rating:read"],
                 state="csrf-xyz",
             )
 
@@ -117,9 +117,9 @@ class TestOAuthResource:
         assert auth.state == "csrf-xyz"
 
         body = route.calls.last.request.content
-        # profile:read auto-prepended
-        assert b"profile:read" in body
-        assert b"rating:read" in body
+        # user:profile:read auto-prepended
+        assert b"user:profile:read" in body
+        assert b"user:rating:read" in body
         assert b"csrf-xyz" in body
 
     @respx.mock
@@ -129,7 +129,7 @@ class TestOAuthResource:
             with pytest.raises(OAuthError) as exc_info:
                 await client.oauth.authorize(
                     redirect_uri="https://app.example.com/callback",
-                    scopes=["rating:read", "not-a-real-scope"],  # type: ignore[list-item]
+                    scopes=["user:rating:read", "not-a-real-scope"],  # type: ignore[list-item]
                 )
 
         assert exc_info.value.error_code == "invalid_scope"
@@ -160,7 +160,7 @@ class TestOAuthResource:
                     "accessToken": "access-xyz",
                     "refreshToken": "refresh-xyz",
                     "expiresIn": 3600,
-                    "scope": "profile:read,rating:read",
+                    "scope": "user:profile:read,user:rating:read",
                     "playerId": "vair_mem_42",
                 },
             )
@@ -175,7 +175,7 @@ class TestOAuthResource:
         assert tokens.access_token == "access-xyz"
         assert tokens.refresh_token == "refresh-xyz"
         assert tokens.expires_in == 3600
-        assert tokens.scope == ["profile:read", "rating:read"]
+        assert tokens.scope == ["user:profile:read", "user:rating:read"]
         assert tokens.player_id == "vair_mem_42"
 
     @respx.mock
@@ -209,7 +209,7 @@ class TestOAuthResource:
                     "accessToken": "new-access",
                     "refreshToken": "new-refresh",
                     "expiresIn": 3600,
-                    "scope": "profile:read",
+                    "scope": "user:profile:read",
                     "playerId": "vair_mem_42",
                 },
             )
@@ -241,8 +241,8 @@ class TestOAuthResource:
                 200,
                 json={
                     "scopes": [
-                        {"name": "profile:read", "description": "Profile access"},
-                        {"name": "rating:read", "description": "Rating access"},
+                        {"name": "user:profile:read", "description": "Profile access"},
+                        {"name": "user:rating:read", "description": "Rating access"},
                     ]
                 },
             )
@@ -252,7 +252,7 @@ class TestOAuthResource:
             scopes = await client.oauth.available_scopes()
 
         assert len(scopes) == 2
-        assert scopes[0]["name"] == "profile:read"
+        assert scopes[0]["name"] == "user:profile:read"
 
     @respx.mock
     @pytest.mark.asyncio

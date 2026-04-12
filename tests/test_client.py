@@ -101,6 +101,7 @@ class TestClientConstruction:
         assert client.matches is not None
         assert client.oauth is not None
         assert client.leaderboard is not None
+        assert client.webhooks is not None
 
 
 # ---------------------------------------------------------------------------

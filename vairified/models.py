@@ -554,6 +554,60 @@ class SearchFilters(BaseModel):
         return self.model_dump(by_alias=True, exclude_none=True)
 
 
+# ---------------------------------------------------------------------------
+# Tournament import — response side
+# ---------------------------------------------------------------------------
+
+
+class TournamentImportResult(BaseModel):
+    """Result of a tournament import submission."""
+
+    model_config = _RESPONSE_CONFIG
+
+    success: bool
+    matches_imported: int = Field(alias="matchesImported")
+    games_recorded: int = Field(alias="gamesRecorded")
+    ghost_players_created: int = Field(alias="ghostPlayersCreated")
+    existing_players_matched: int = Field(alias="existingPlayersMatched")
+    dry_run: bool | None = Field(default=None, alias="dryRun")
+    message: str | None = None
+    errors: list[str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# Webhook deliveries — response side
+# ---------------------------------------------------------------------------
+
+
+class WebhookDelivery(BaseModel):
+    """A single webhook delivery attempt."""
+
+    model_config = _RESPONSE_CONFIG
+
+    id: str
+    event: str
+    url: str
+    status_code: int | None = Field(default=None, alias="statusCode")
+    response_body: str | None = Field(default=None, alias="responseBody")
+    error_message: str | None = Field(default=None, alias="errorMessage")
+    attempts: int
+    max_attempts: int = Field(alias="maxAttempts")
+    last_attempt_at: str = Field(alias="lastAttemptAt")
+    next_retry_at: str | None = Field(default=None, alias="nextRetryAt")
+    completed_at: str | None = Field(default=None, alias="completedAt")
+    created_at: str = Field(alias="createdAt")
+    payload: dict[str, Any]
+
+
+class WebhookDeliveriesResult(BaseModel):
+    """Paginated list of webhook delivery attempts."""
+
+    model_config = _RESPONSE_CONFIG
+
+    deliveries: list[WebhookDelivery]
+    total: int
+
+
 __all__ = [
     "Gender",
     "Game",
@@ -566,4 +620,7 @@ __all__ = [
     "RatingUpdate",
     "SearchFilters",
     "SportRating",
+    "TournamentImportResult",
+    "WebhookDelivery",
+    "WebhookDeliveriesResult",
 ]

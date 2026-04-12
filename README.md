@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="https://github.com/Vairified/vairified.py/actions/workflows/ci.yml"><img src="https://github.com/Vairified/vairified.py/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <img src="https://img.shields.io/badge/version-0.2.0-green.svg" alt="Version 0.2.0">
+  <img src="https://img.shields.io/badge/version-0.3.0-green.svg" alt="Version 0.3.0">
   <img src="https://img.shields.io/badge/python-3.12+-blue.svg" alt="Python 3.12+">
   <a href="https://pypi.org/project/vairified/"><img src="https://img.shields.io/pypi/v/vairified.svg" alt="PyPI"></a>
 </p>
@@ -54,10 +54,11 @@ Every operation lives on a sub-resource that matches the REST path:
 
 | Sub-resource            | Operations                                              |
 |-------------------------|---------------------------------------------------------|
-| `client.members`        | `get`, `search`, `find`, `rating_updates`               |
-| `client.matches`        | `submit`, `test_webhook`                                |
+| `client.members`        | `get`, `get_bulk`, `search`, `find`, `rating_updates`   |
+| `client.matches`        | `submit`, `tournament_import`, `test_webhook`            |
 | `client.oauth`          | `authorize`, `exchange_token`, `refresh`, `revoke`      |
 | `client.leaderboard`    | `list`, `rank`, `categories`                            |
+| `client.webhooks`       | `deliveries`                                            |
 | `client.usage()`        | Rate-limit + request-count stats                        |
 
 ## Members
@@ -126,6 +127,21 @@ if mike:
     print(mike.rating_for("pickleball"))
 ```
 
+### Bulk member lookup
+
+Fetch up to 100 members in one call by their integer member IDs:
+
+```python
+members = await client.members.get_bulk([4873327, 4873328, 4873329])
+for m in members:
+    print(m.name, m.rating_for("pickleball"))
+
+# Filter to a specific sport
+pb = await client.members.get_bulk([4873327], sport="pickleball")
+```
+
+Unknown IDs are silently omitted — the list may be shorter than the input.
+
 ### Rating change notifications
 
 ```python
@@ -172,7 +188,36 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 ```
 
 Set `batch.dry_run = True` to validate without persisting — your API key
-must have the `dry-run` scope.
+must have the `key:dry-run` scope.
+
+### Tournament import
+
+Import historical tournament results with automatic player matching:
+
+```python
+result = await client.matches.tournament_import({
+    "tournamentName": "Austin Open 2026",
+    "sport": "pickleball",
+    "winScore": 11,
+    "winBy": 2,
+    "matches": [...]
+})
+print(f"Imported {result.matches_imported} matches, {result.ghost_players_created} ghosts")
+```
+
+## Webhook Deliveries
+
+Inspect recent webhook delivery attempts for your app:
+
+```python
+result = await client.webhooks.deliveries(status="failed", limit=10)
+for d in result.deliveries:
+    print(d.event, d.status_code, d.error_message)
+
+# Filter by event type
+rating_events = await client.webhooks.deliveries(event="rating.updated")
+print(f"{rating_events.total} total rating.updated deliveries")
+```
 
 ## OAuth Connect Flow
 
@@ -185,7 +230,7 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     state = secrets.token_urlsafe(32)
     auth = await client.oauth.authorize(
         redirect_uri="https://myapp.com/oauth/callback",
-        scopes=["profile:read", "rating:read", "match:submit"],
+        scopes=["user:profile:read", "user:rating:read", "user:match:submit"],
         state=state,
     )
     redirect_to = auth.authorization_url
@@ -214,12 +259,12 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 
 | Scope                | Description                                    |
 |----------------------|------------------------------------------------|
-| `profile:read`       | Name, location, verification status            |
-| `profile:email`      | Email address                                  |
-| `rating:read`        | Current rating and rating splits               |
-| `rating:history`     | Complete rating history                        |
-| `match:submit`       | Submit matches on behalf of user               |
-| `webhook:subscribe`  | Rating change notifications                    |
+| `user:profile:read`       | Name, location, verification status            |
+| `user:profile:email`      | Email address                                  |
+| `user:rating:read`        | Current rating and rating splits               |
+| `user:rating:history`     | Complete rating history                        |
+| `user:match:submit`       | Submit matches on behalf of user               |
+| `user:webhook:subscribe`  | Rating change notifications                    |
 
 ## Leaderboards
 
@@ -352,17 +397,17 @@ async with Vairified() as client:   # reads both env vars
 
 ## API Key Scopes
 
-| Scope               | Access                                         |
-|---------------------|------------------------------------------------|
-| `admin`             | Full access to all endpoints                   |
-| `write`             | All read + write operations                    |
-| `read`              | All read operations                            |
-| `leaderboard:read`  | Leaderboard endpoints only                     |
-| `player:search`     | Player search only                             |
-| `member:read`       | Connected member data only                     |
-| `match:submit`      | Submit match results                           |
-| `tournament:import` | Import tournament data                         |
-| `dry-run`           | Validate writes without persisting             |
+| Scope                    | Access                                         |
+|--------------------------|------------------------------------------------|
+| `key:admin`              | Full access to all endpoints                   |
+| `key:write`              | All read + write operations                    |
+| `key:read`               | All read operations                            |
+| `key:leaderboard:read`   | Leaderboard endpoints only                     |
+| `key:player:search`      | Player search only                             |
+| `key:member:read`        | Connected member data only                     |
+| `key:match:submit`       | Submit match results                           |
+| `key:tournament:import`  | Import tournament data                         |
+| `key:dry-run`            | Validate writes without persisting             |
 
 ## Error Handling
 
@@ -397,6 +442,11 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 ## Migrating from 0.1.x
 
 Version 0.2.0 is a breaking rewrite. See the
+**From 0.2.x → 0.3.0:** All OAuth scope strings gained a `user:` prefix
+(`profile:read` → `user:profile:read`). Update any hardcoded scope arrays.
+New: `members.get_bulk()`, `matches.tournament_import()`, `webhooks.deliveries()`.
+
+**From 0.1.x → 0.2.0:** Full rewrite — see the
 [migration guide](https://vairified.github.io/vairified.py/migrating.html)
 for the full diff, and [CHANGELOG.md](CHANGELOG.md) for the release notes.
 
