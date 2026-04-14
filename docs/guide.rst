@@ -334,8 +334,8 @@ Batch result
 Dry-run mode
 ^^^^^^^^^^^^
 
-Set ``dry_run=True`` on the batch to validate without persisting. Your
-API key must have the ``dry-run`` scope:
+Set ``dry_run=True`` on the batch to validate without persisting. No
+special scope needed — any key with ``key:match:submit`` can dry-run:
 
 .. code-block:: python
 

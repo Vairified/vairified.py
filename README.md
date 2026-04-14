@@ -187,8 +187,8 @@ async with Vairified(api_key="vair_pk_xxx") as client:
         print(f"Submitted {result.num_games} games in {result.num_matches} matches")
 ```
 
-Set `batch.dry_run = True` to validate without persisting — your API key
-must have the `key:dry-run` scope.
+Set `batch.dry_run = True` to validate without persisting. No special
+scope needed — any key with `key:match:submit` can dry-run.
 
 ### Tournament import
 
@@ -407,7 +407,6 @@ async with Vairified() as client:   # reads both env vars
 | `key:member:read`        | Connected member data only                     |
 | `key:match:submit`       | Submit match results                           |
 | `key:tournament:import`  | Import tournament data                         |
-| `key:dry-run`            | Validate writes without persisting             |
 
 ## Error Handling
 
