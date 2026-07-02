@@ -33,10 +33,8 @@ def _member_payload(**overrides):
         "fullName": "T P",
         "displayName": "T",
         "status": {
-            "isVairified": False,
             "isWheelchair": False,
             "isAmbassador": False,
-            "isRater": False,
             "isConnected": False,
         },
         "sport": {},

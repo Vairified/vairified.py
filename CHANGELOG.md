@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.4.0] - 2026-07-02
+
+### Breaking Changes
+
+- Per-sport VAIRification & VAIR-Pro status (Vairified#783). `is_vairified`, `is_rater`, `is_vair_pro`, and `is_vair_pro_status` moved off `member.status` onto each per-sport entry — read them via `member.sport["pickleball"].is_vairified`. `member.status` now carries only the genuinely global flags: `is_wheelchair`, `is_ambassador`, `is_connected`. This mirrors the backend: a player can be VAIRified / a VAIR Pro in one sport but not another.
+
+### Added
+
+- `SportRating.is_vairified`, `.is_rater`, `.is_vair_pro`, `.is_vair_pro_status` (`Literal["PENDING", "ACTIVE"] | None`), on every `member.sport` entry.
+
 ## [0.3.2] - 2026-07-15
 
 ### Fixed
