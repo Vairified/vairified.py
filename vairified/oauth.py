@@ -49,6 +49,13 @@ class OAuthConfig:
     api_key: str
     redirect_uri: str
     base_url: str = "https://api-next.vairified.com/api/v1"
+    #: Your app's ``client_id`` — the ``PartnerApp.slug`` Vairified assigned
+    #: you (e.g. ``"dinkr"``). Required by the browser
+    #: ``GET /partner/oauth/authorize`` endpoint to identify your app; without
+    #: it the authorization page rejects the request. Only needed for this
+    #: pure-frontend URL helper — the recommended
+    #: :meth:`OAuthResource.authorize` flow identifies your app by API key.
+    client_id: Optional[str] = None
 
 
 @dataclass
@@ -119,11 +126,18 @@ def get_authorization_url(
     if "user:profile:read" not in scopes:
         scopes = ["user:profile:read"] + scopes
 
+    # Scope is space-delimited per RFC 6749 §3.3 — the deployed authorization
+    # server splits on whitespace, not commas.
     params = {
         "redirect_uri": config.redirect_uri,
-        "scope": ",".join(scopes),
+        "scope": " ".join(scopes),
         "response_type": "code",
     }
+
+    # client_id (the PartnerApp slug) identifies the app to the browser
+    # authorize endpoint; the URL is rejected without it.
+    if config.client_id:
+        params["client_id"] = config.client_id
 
     if state:
         params["state"] = state

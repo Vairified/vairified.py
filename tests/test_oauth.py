@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from urllib.parse import parse_qs, urlparse
+
 import pytest
 import respx
 from httpx import Response
@@ -59,27 +62,42 @@ class TestGetAuthorizationUrl:
             api_key="vair_pk_test",
             redirect_uri="https://app.example.com/callback",
             base_url="https://api.example.com/api/v1",
+            client_id="dinkr",
         )
 
     def test_defaults(self):
         url = get_authorization_url(self._config())
         assert url.startswith("https://api.example.com/api/v1/partner/oauth/authorize?")
-        assert "redirect_uri=https%3A%2F%2Fapp.example.com%2Fcallback" in url
-        assert "scope=user%3Aprofile%3Aread%2Cuser%3Arating%3Aread" in url
-        assert "response_type=code" in url
+        q = parse_qs(urlparse(url).query)
+        assert q["redirect_uri"] == ["https://app.example.com/callback"]
+        # RFC 6749 §3.3 — scopes are space-delimited, never comma-joined.
+        assert q["scope"] == ["user:profile:read user:rating:read"]
+        assert "%2C" not in url  # no encoded comma between scopes
+        assert q["response_type"] == ["code"]
+        # client_id (PartnerApp slug) identifies the app to the GET endpoint.
+        assert q["client_id"] == ["dinkr"]
+
+    def test_client_id_omitted_when_not_configured(self):
+        config = OAuthConfig(
+            api_key="vair_pk_test",
+            redirect_uri="https://app.example.com/callback",
+            base_url="https://api.example.com/api/v1",
+        )
+        q = parse_qs(urlparse(get_authorization_url(config)).query)
+        assert "client_id" not in q
 
     def test_custom_scopes(self):
         url = get_authorization_url(
             self._config(),
             scopes=["user:rating:read", "user:match:submit"],
         )
-        # user:profile:read should be auto-prepended.
-        assert "user%3Aprofile%3Aread" in url
-        assert "user%3Amatch%3Asubmit" in url
+        q = parse_qs(urlparse(url).query)
+        # user:profile:read auto-prepended, space-delimited.
+        assert q["scope"] == ["user:profile:read user:rating:read user:match:submit"]
 
     def test_state_param_included(self):
         url = get_authorization_url(self._config(), state="csrf-token-xyz")
-        assert "state=csrf-token-xyz" in url
+        assert parse_qs(urlparse(url).query)["state"] == ["csrf-token-xyz"]
 
     def test_state_omitted_when_none(self):
         url = get_authorization_url(self._config())
@@ -99,7 +117,7 @@ class TestOAuthResource:
             return_value=Response(
                 200,
                 json={
-                    "authorizationUrl": "https://vairified.com/connect/xyz",
+                    "authorization_url": "https://vairified.com/connect/xyz",
                     "code": "auth-code-123",
                 },
             )
@@ -116,11 +134,13 @@ class TestOAuthResource:
         assert auth.code == "auth-code-123"
         assert auth.state == "csrf-xyz"
 
-        body = route.calls.last.request.content
-        # user:profile:read auto-prepended
-        assert b"user:profile:read" in body
-        assert b"user:rating:read" in body
-        assert b"csrf-xyz" in body
+        # exact request wire the deployed api-next expects
+        body = json.loads(route.calls.last.request.content)
+        assert body["redirect_uri"] == "https://app.example.com/callback"
+        assert "redirectUri" not in body
+        # space-delimited, user:profile:read auto-prepended
+        assert body["scope"] == "user:profile:read user:rating:read"
+        assert body["state"] == "csrf-xyz"
 
     @respx.mock
     @pytest.mark.asyncio
@@ -138,10 +158,10 @@ class TestOAuthResource:
     @respx.mock
     @pytest.mark.asyncio
     async def test_authorize_defaults_when_no_scopes(self, api_key, base_url):
-        respx.post(f"{base_url}/partner/oauth/authorize").mock(
+        route = respx.post(f"{base_url}/partner/oauth/authorize").mock(
             return_value=Response(
                 200,
-                json={"authorizationUrl": "https://x.example.com", "code": "c"},
+                json={"authorization_url": "https://x.example.com", "code": "c"},
             )
         )
         async with Vairified(api_key=api_key, base_url=base_url) as client:
@@ -149,19 +169,22 @@ class TestOAuthResource:
                 redirect_uri="https://app.example.com/callback"
             )
         assert auth.authorization_url == "https://x.example.com"
+        body = json.loads(route.calls.last.request.content)
+        assert body["scope"] == "user:profile:read user:rating:read"
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_exchange_token(self, api_key, base_url):
-        respx.post(f"{base_url}/partner/oauth/token").mock(
+        route = respx.post(f"{base_url}/partner/oauth/token").mock(
             return_value=Response(
                 200,
                 json={
-                    "accessToken": "access-xyz",
-                    "refreshToken": "refresh-xyz",
-                    "expiresIn": 3600,
-                    "scope": "user:profile:read,user:rating:read",
-                    "playerId": "vair_mem_42",
+                    "access_token": "access-xyz",
+                    "token_type": "Bearer",
+                    "refresh_token": "refresh-xyz",
+                    "expires_in": 3600,
+                    "scope": "user:profile:read user:rating:read",
+                    "player_id": "vair_mem_42",
                 },
             )
         )
@@ -172,6 +195,13 @@ class TestOAuthResource:
                 redirect_uri="https://app.example.com/callback",
             )
 
+        # request wire (RFC 6749 §4.1.3)
+        body = json.loads(route.calls.last.request.content)
+        assert body["grant_type"] == "authorization_code"
+        assert body["code"] == "code-123"
+        assert body["redirect_uri"] == "https://app.example.com/callback"
+        assert "redirectUri" not in body
+        # response mapping (snake_case)
         assert tokens.access_token == "access-xyz"
         assert tokens.refresh_token == "refresh-xyz"
         assert tokens.expires_in == 3600
@@ -180,37 +210,40 @@ class TestOAuthResource:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_exchange_token_empty_scope(self, api_key, base_url):
-        """Server returning empty scope string should produce an empty list."""
+    async def test_exchange_token_empty_scope_falls_back_to_scopes_array(
+        self, api_key, base_url
+    ):
+        """Empty `scope` string falls back to the deprecated `scopes` array."""
         respx.post(f"{base_url}/partner/oauth/token").mock(
             return_value=Response(
                 200,
                 json={
-                    "accessToken": "a",
-                    "refreshToken": None,
-                    "expiresIn": 3600,
+                    "access_token": "a",
+                    "refresh_token": None,
+                    "expires_in": 3600,
                     "scope": "",
-                    "playerId": "p",
+                    "scopes": ["user:profile:read"],
+                    "player_id": "p",
                 },
             )
         )
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             tokens = await client.oauth.exchange_token("c", "r")
-        assert tokens.scope == []
+        assert tokens.scope == ["user:profile:read"]
         assert tokens.refresh_token is None
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_refresh(self, api_key, base_url):
-        respx.post(f"{base_url}/partner/oauth/refresh").mock(
+        route = respx.post(f"{base_url}/partner/oauth/refresh").mock(
             return_value=Response(
                 200,
                 json={
-                    "accessToken": "new-access",
-                    "refreshToken": "new-refresh",
-                    "expiresIn": 3600,
+                    "access_token": "new-access",
+                    "refresh_token": "new-refresh",
+                    "expires_in": 3600,
                     "scope": "user:profile:read",
-                    "playerId": "vair_mem_42",
+                    "player_id": "vair_mem_42",
                 },
             )
         )
@@ -218,19 +251,27 @@ class TestOAuthResource:
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             tokens = await client.oauth.refresh("old-refresh-token")
 
+        # request wire (RFC 6749 §6)
+        body = json.loads(route.calls.last.request.content)
+        assert body["grant_type"] == "refresh_token"
+        assert body["refresh_token"] == "old-refresh-token"
+        assert "refreshToken" not in body
         assert tokens.access_token == "new-access"
         assert tokens.refresh_token == "new-refresh"
 
     @respx.mock
     @pytest.mark.asyncio
     async def test_revoke(self, api_key, base_url):
-        respx.post(f"{base_url}/partner/oauth/revoke").mock(
+        route = respx.post(f"{base_url}/partner/oauth/revoke").mock(
             return_value=Response(200, json={"success": True})
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             result = await client.oauth.revoke("vair_mem_42")
 
+        body = json.loads(route.calls.last.request.content)
+        assert body["player_id"] == "vair_mem_42"
+        assert "playerId" not in body
         assert result == {"success": True}
 
     @respx.mock
