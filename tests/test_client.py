@@ -113,12 +113,17 @@ class TestMembersResource:
     @respx.mock
     @pytest.mark.asyncio
     async def test_get_member(self, api_key, base_url):
-        respx.get(f"{base_url}/partner/member").mock(
+        route = respx.get(f"{base_url}/partner/member").mock(
             return_value=Response(200, json=_member_payload())
         )
 
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             member = await client.members.get("vair_mem_xxx")
+
+        # The deployed api-next keys the lookup on `memberId`; sending `id` 404s.
+        params = route.calls.last.request.url.params
+        assert params["memberId"] == "vair_mem_xxx"
+        assert "id" not in params
 
         assert member.member_id == 4873327
         assert member.name == "Mike Barker"

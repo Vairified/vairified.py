@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.3.2] - 2026-07-15
+
+### Fixed
+
+- **OAuth + member requests now match the deployed Partner API.** Earlier versions sent the wrong wire and could not complete the flow against `api-*.vairified.com` without hand-patching ([#844]):
+  - `oauth.authorize()`, `oauth.exchange_token()`, `oauth.refresh()`, and `oauth.revoke()` now send snake_case bodies (`redirect_uri`, `refresh_token`, `player_id`), space-delimited `scope` (RFC 6749 §3.3), and the required `grant_type` (`authorization_code` / `refresh_token`).
+  - Token responses are read from the API's snake_case fields (`access_token`, `refresh_token`, `expires_in`, `player_id`, space-delimited `scope`), falling back to the deprecated `scopes` array.
+  - `oauth.authorize()` reads the API's `authorization_url` field.
+  - `members.get()` looks the player up by the `memberId` query parameter (was `id`, which returned 404).
+
+### Added
+
+- `get_authorization_url()` / `OAuthConfig` accept an optional `client_id` (your `PartnerApp` slug) and emit it as `client_id` — required by the browser `GET /partner/oauth/authorize` endpoint. Scopes in the built URL are now space-delimited.
+
+[#844]: https://github.com/Vairified/Vairified/issues/844
+
 ## [0.3.1] - 2026-04-14
 
 ### Changed

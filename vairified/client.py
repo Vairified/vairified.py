@@ -308,7 +308,7 @@ class MembersResource(_Resource):
                 sport=["pickleball", "padel"],
             )
         """
-        params: dict[str, Any] = {"id": player_id}
+        params: dict[str, Any] = {"memberId": player_id}
         if sport is not None:
             params["sport"] = sport if isinstance(sport, str) else ",".join(sport)
         data = await self._client._request("GET", "/partner/member", params=params)
@@ -646,14 +646,15 @@ class OAuthResource(_Resource):
             "POST",
             "/partner/oauth/authorize",
             json={
-                "redirectUri": redirect_uri,
-                "scope": ",".join(scope_list),
+                # snake_case body; scope space-delimited per RFC 6749 §3.3.
+                "redirect_uri": redirect_uri,
+                "scope": " ".join(scope_list),
                 "state": state,
             },
         )
         payload = data or {}
         return AuthorizationResponse(
-            authorization_url=payload.get("authorizationUrl", ""),
+            authorization_url=payload.get("authorization_url", ""),
             code=payload.get("code", ""),
             state=state,
         )
@@ -663,7 +664,13 @@ class OAuthResource(_Resource):
         data = await self._client._request(
             "POST",
             "/partner/oauth/token",
-            json={"code": code, "redirectUri": redirect_uri},
+            # RFC 6749 §4.1.3 — requires grant_type + snake_case redirect_uri
+            # (which must match the authorize request).
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            },
         )
         return _token_response_from(data or {})
 
@@ -672,7 +679,8 @@ class OAuthResource(_Resource):
         data = await self._client._request(
             "POST",
             "/partner/oauth/refresh",
-            json={"refreshToken": refresh_token},
+            # RFC 6749 §6 — refresh grant, snake_case body.
+            json={"grant_type": "refresh_token", "refresh_token": refresh_token},
         )
         return _token_response_from(data or {})
 
@@ -681,7 +689,7 @@ class OAuthResource(_Resource):
         data = await self._client._request(
             "POST",
             "/partner/oauth/revoke",
-            json={"playerId": player_id},
+            json={"player_id": player_id},
         )
         return data or {}
 
@@ -812,14 +820,20 @@ class WebhooksResource(_Resource):
 
 def _token_response_from(data: dict[str, Any]) -> TokenResponse:
     """Build a TokenResponse from a raw OAuth response dict."""
+    # The API returns `scope` as a space-delimited string (RFC 6749 §3.3);
+    # fall back to the deprecated `scopes` array for older API builds.
     scope_raw = data.get("scope", "")
-    scope_list = scope_raw.split(",") if scope_raw else []
+    if scope_raw:
+        scope_list = scope_raw.split()
+    else:
+        scopes_field = data.get("scopes")
+        scope_list = scopes_field if isinstance(scopes_field, list) else []
     return TokenResponse(
-        access_token=data.get("accessToken", ""),
-        refresh_token=data.get("refreshToken"),
-        expires_in=data.get("expiresIn", 3600),
+        access_token=data.get("access_token", ""),
+        refresh_token=data.get("refresh_token"),
+        expires_in=data.get("expires_in", 3600),
         scope=scope_list,
-        player_id=data.get("playerId", ""),
+        player_id=data.get("player_id", ""),
     )
 
 
