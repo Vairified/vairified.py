@@ -72,11 +72,11 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     print(member.name)                      # Full name
     print(member.display_name)               # "Mike B."
     print(member.rating_for("pickleball"))   # 3.915
-    print(member.status.is_vairified)        # True
 
-    # Dict-like access to rating splits for a specific sport
+    # Dict-like access to rating splits + per-sport status for a sport
     pb = member.sport["pickleball"]
     print(pb.rating, pb.abbr)                # 3.915 VO
+    print(pb.is_vairified)                   # True (per-sport, Vairified#783)
     print(pb["overall-open"].rating)         # 3.915
     print("singles-open" in pb)              # True
     for key, split in pb:
@@ -312,10 +312,13 @@ member.last_name                     # "Barker"
 member.gender                        # Gender enum (MALE | FEMALE | OTHER | UNKNOWN)
 member.age
 member.city / state / zip / country
-member.status.is_vairified           # Grouped status flags
+member.status.is_ambassador          # Global status flags
 member.status.is_connected
 member.sport                         # dict[str, SportRating]
 member.sports                        # ["pickleball", "padel"] (property)
+member.sport["pickleball"].is_vairified      # per-sport (Vairified#783)
+member.sport["pickleball"].is_vair_pro       # per-sport
+member.sport["pickleball"].is_vair_pro_status  # "ACTIVE" | "PENDING" | None
 member.rating_for("pickleball")      # float | None
 member.split("overall-open")         # RatingSplit | None
 ```

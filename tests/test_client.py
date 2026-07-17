@@ -45,10 +45,8 @@ def _member_payload(**overrides: Any) -> dict[str, Any]:
         "country": "US",
         "gender": "MALE",
         "status": {
-            "isVairified": True,
             "isWheelchair": False,
             "isAmbassador": False,
-            "isRater": False,
             "isConnected": True,
         },
         "sport": {
@@ -60,6 +58,10 @@ def _member_payload(**overrides: Any) -> dict[str, Any]:
                     "gender-open": {"rating": 3.880, "abbr": "VG"},
                     "singles-open": {"rating": 3.710, "abbr": "S"},
                 },
+                "isVairified": True,
+                "isRater": False,
+                "isVairPro": False,
+                "isVairProStatus": None,
             },
         },
         "activeLeagues": ["Austin Pickleball Club"],
@@ -129,7 +131,9 @@ class TestMembersResource:
         assert member.name == "Mike Barker"
         assert member.display_name == "Mike B."
         assert member.gender is Gender.MALE
-        assert member.status.is_vairified is True
+        assert member.sport["pickleball"].is_vairified is True
+        assert member.sport["pickleball"].is_vair_pro is False
+        assert member.sport["pickleball"].is_vair_pro_status is None
         assert member.sports == ["pickleball"]
         assert member.rating_for("pickleball") == pytest.approx(3.915)
         assert member.rating_for("padel") is None
@@ -421,7 +425,7 @@ class TestModels:
         assert member.member_id == 4873327
         assert member.name == "Mike Barker"
         assert member.gender is Gender.MALE
-        assert member.status.is_vairified is True
+        assert member.sport["pickleball"].is_vairified is True
 
         # Sport-keyed access
         pb = member.sport["pickleball"]

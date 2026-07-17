@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -110,6 +110,20 @@ class SportRating(BaseModel):
         default_factory=dict, alias="ratingSplits"
     )
 
+    # Per-sport status (Vairified#783). VAIRification and VAIR-Pro certs are
+    # sport-scoped, so these live on each sport rather than the member status.
+    # Defaulted so the SDK stays compatible with API responses that predate #783.
+    is_vairified: bool = Field(default=False, alias="isVairified")
+    """Player is VAIRified in this sport (has a verified, non-recreational rating)."""
+    is_rater: bool = Field(default=False, alias="isRater")
+    """Active VAIR Pro (can rate) in this sport. Alias of :attr:`is_vair_pro`."""
+    is_vair_pro: bool = Field(default=False, alias="isVairPro")
+    """Player is an active VAIR Pro (can rate) in this sport."""
+    is_vair_pro_status: Literal["PENDING", "ACTIVE"] | None = Field(
+        default=None, alias="isVairProStatus"
+    )
+    """VAIR-Pro lifecycle status here: ``"ACTIVE"``, ``"PENDING"``, or ``None``."""
+
     def __getitem__(self, key: str) -> RatingSplit:
         return self.rating_splits[key]
 
@@ -144,29 +158,29 @@ class SportRating(BaseModel):
 
 class MemberStatus(BaseModel):
     """
-    Status flags for a player.
+    Global status flags for a player.
 
     Grouped into a sub-object rather than top-level booleans so that
     inspection (``pprint``, ``repr``, JSON) keeps all ``is_*`` flags
     visually clustered.
+
+    Only the genuinely global flags live here. VAIRification and VAIR-Pro
+    status are per-sport (Vairified#783) and live on each
+    :class:`SportRating` (``member.sport["pickleball"].is_vairified``).
     """
 
     model_config = _RESPONSE_CONFIG
 
-    is_vairified: bool = Field(alias="isVairified")
     is_wheelchair: bool = Field(alias="isWheelchair")
     is_ambassador: bool = Field(alias="isAmbassador")
-    is_rater: bool = Field(alias="isRater")
     is_connected: bool = Field(alias="isConnected")
 
     def __repr__(self) -> str:  # pragma: no cover
         flags = [
             name
             for name, value in (
-                ("vairified", self.is_vairified),
                 ("wheelchair", self.is_wheelchair),
                 ("ambassador", self.is_ambassador),
-                ("rater", self.is_rater),
                 ("connected", self.is_connected),
             )
             if value
