@@ -36,7 +36,7 @@ SCOPES: dict[str, str] = {
 DEFAULT_SCOPES: list[OAuthScope] = ["user:profile:read", "user:rating:read"]
 
 
-@dataclass
+@dataclass(frozen=True)
 class OAuthConfig:
     """
     OAuth configuration for a partner application.
@@ -58,7 +58,7 @@ class OAuthConfig:
     client_id: Optional[str] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class AuthorizationResponse:
     """
     Response from starting an OAuth authorization.
@@ -73,7 +73,7 @@ class AuthorizationResponse:
     state: Optional[str] = None
 
 
-@dataclass
+@dataclass(frozen=True)
 class TokenResponse:
     """
     Response from exchanging an authorization code for tokens.
