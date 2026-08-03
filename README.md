@@ -54,7 +54,7 @@ Every operation lives on a sub-resource that matches the REST path:
 
 | Sub-resource            | Operations                                              |
 |-------------------------|---------------------------------------------------------|
-| `client.members`        | `get`, `get_bulk`, `search`, `find`, `rating_updates`   |
+| `client.members`        | `get`, `get_bulk`, `get_by_email`, `search`, `find`, `rating_updates` |
 | `client.matches`        | `submit`, `tournament_import`, `test_webhook`            |
 | `client.oauth`          | `authorize`, `exchange_token`, `refresh`, `revoke`      |
 | `client.leaderboard`    | `list`, `rank`, `categories`                            |
@@ -141,6 +141,34 @@ pb = await client.members.get_bulk([4873327], sport="pickleball")
 ```
 
 Unknown IDs are silently omitted — the list may be shorter than the input.
+
+### Look members up by email
+
+Resolve up to 100 members by their **exact** email address — useful for linking
+your users to their VAIR identity when you hold their email but not their member
+ID, instead of waiting for each player to complete SSO:
+
+```python
+result = await client.members.get_by_email(["ada@example.com", "nobody@example.com"])
+
+for match in result.matched:
+    member = match.sole  # None when the address is ambiguous
+    if member:
+        print(match.email, "->", member.member_id)
+
+# Read not_found directly — don't diff your input against the results
+print("no VAIR account found for:", result.not_found)
+```
+
+Requires the **`key:player:lookup`** scope, granted per partner on approval —
+holding `key:player:search` does not imply it. Ask VAIR to enable it for your app.
+
+Unlike `get_bulk`, **nothing is silently dropped**: every address you supply comes
+back in either `matched` or `not_found`. Matching is exact and case-insensitive
+(no partial or fuzzy matching), and `match.members` is a list because an email is
+not a unique key in VAIR — use `.sole` or check `.is_ambiguous` rather than
+assuming a single result. A `not_found` address is not proof the person has no VAIR
+account: unclaimed imported records are excluded from this lookup.
 
 ### Rating change notifications
 

@@ -64,6 +64,8 @@ from vairified.models import (
     MatchBatch,
     MatchBatchResult,
     Member,
+    MemberEmailMatch,
+    MembersByEmailResult,
     MemberStatus,
     RatingSplit,
     RatingUpdate,
@@ -86,7 +88,7 @@ from vairified.oauth import (
     validate_scope,
 )
 
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 __all__ = [
     # Version
@@ -102,7 +104,9 @@ __all__ = [
     # Response models
     "Gender",
     "Member",
+    "MemberEmailMatch",
     "MemberStatus",
+    "MembersByEmailResult",
     "RatingSplit",
     "RatingUpdate",
     "SportRating",
