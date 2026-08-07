@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "conduit": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "git+https://github.com/cortex-app/conduit@0.1.6",
+        "conduit-mcp"
+      ],
+      "env": {
+        "PHABRICATOR_URL": "https://hq.vairified.com/api/",
+        "PHABRICATOR_TOKEN": "${PHABRICATOR_TOKEN}"
+      }
+    }
+  }
+}
