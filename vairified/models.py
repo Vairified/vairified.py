@@ -593,6 +593,84 @@ class TournamentImportResult(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class MemberEmailMatch(BaseModel):
+    """
+    One requested address that resolved to at least one member.
+
+    ``members`` is always a list. An email address is not a unique key in
+    VAIR -- an unclaimed imported record can share an address with a
+    claimed account -- so never assume a single element without checking.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    #: The address exactly as you supplied it, not as stored.
+    email: str
+    #: Every member holding this address. Never empty.
+    members: list[Member]
+
+    @property
+    def sole(self) -> Member | None:
+        """
+        The single member for this address, or ``None`` when the address
+        is ambiguous (more than one match).
+
+        Use this rather than ``members[0]`` when a wrong link is worse
+        than no link -- it refuses to guess instead of silently picking
+        one.
+        """
+        return self.members[0] if len(self.members) == 1 else None
+
+    @property
+    def is_ambiguous(self) -> bool:
+        """Whether this address resolved to more than one member."""
+        return len(self.members) > 1
+
+
+class MembersByEmailResult(BaseModel):
+    """
+    Result of a :meth:`MembersResource.get_by_email` call.
+
+    Every address you supplied appears in exactly one of ``matched`` or
+    ``not_found`` -- the endpoint never silently drops one, so consume
+    ``not_found`` directly rather than diffing your input against the
+    results.
+
+    A ``not_found`` address is not proof the person has no VAIR account:
+    unclaimed imported records are deliberately excluded from this lookup.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    matched: list[MemberEmailMatch] = Field(default_factory=list)
+    #: Addresses that resolved to nothing, echoed as you supplied them.
+    not_found: list[str] = Field(default_factory=list, alias="notFound")
+
+    def get(self, email: str) -> MemberEmailMatch | None:
+        """
+        Look up one address's match, case-insensitively.
+
+        Saves callers a linear scan and, more importantly, saves them
+        from matching case-sensitively against an address the server
+        echoed back in whatever case they originally sent.
+        """
+        needle = email.strip().lower()
+        for match in self.matched:
+            if match.email.lower() == needle:
+                return match
+        return None
+
+    @property
+    def all_resolved(self) -> bool:
+        """Whether every requested address resolved to at least one member."""
+        return not self.not_found
+
+    @property
+    def member_count(self) -> int:
+        """Total number of members across every matched address."""
+        return sum(len(m.members) for m in self.matched)
+
+
 class WebhookDelivery(BaseModel):
     """A single webhook delivery attempt."""
 
@@ -629,7 +707,9 @@ __all__ = [
     "MatchBatch",
     "MatchBatchResult",
     "Member",
+    "MemberEmailMatch",
     "MemberStatus",
+    "MembersByEmailResult",
     "RatingSplit",
     "RatingUpdate",
     "SearchFilters",

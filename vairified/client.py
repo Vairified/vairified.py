@@ -34,7 +34,7 @@ Usage::
 
 Sub-resources:
 
-* :attr:`Vairified.members` — get/search/get_bulk/rating_updates
+* :attr:`Vairified.members` — get/search/get_bulk/get_by_email/rating_updates
 * :attr:`Vairified.matches` — submit batch, tournament_import
 * :attr:`Vairified.oauth` — OAuth authorization flow
 * :attr:`Vairified.leaderboard` — leaderboard queries
@@ -61,6 +61,7 @@ from vairified.models import (
     MatchBatch,
     MatchBatchResult,
     Member,
+    MembersByEmailResult,
     RatingUpdate,
     SearchFilters,
     TournamentImportResult,
@@ -91,6 +92,7 @@ ENVIRONMENTS: dict[str, str] = {
 _DEFAULT_BASE_URL = ENVIRONMENTS["production"]
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_SEARCH_LIMIT = 20
+_MAX_EMAILS_PER_LOOKUP = 100
 
 
 # ---------------------------------------------------------------------------
@@ -515,6 +517,76 @@ class MembersResource(_Resource):
         if not isinstance(rows, list):
             return []
         return [Member.model_validate(row) for row in rows]
+
+    async def get_by_email(
+        self,
+        emails: Sequence[str],
+        *,
+        sport: str | None = None,
+    ) -> MembersByEmailResult:
+        """
+        Resolve up to 100 members by their **exact** email address.
+
+        Use this to link your users to their VAIR identity when you hold
+        their email but not their member ID -- e.g. resolving a tournament
+        roster at registration instead of waiting for each player to
+        complete SSO.
+
+        **Requires the ``key:player:lookup`` scope**, which is granted per
+        partner on approval. Holding ``key:player:search`` does not imply it.
+
+        Matching is exact and case-insensitive; there is deliberately no
+        partial, prefix or fuzzy matching. Every address you supply comes
+        back in either ``matched`` or ``not_found``, so read ``not_found``
+        directly instead of diffing your input against the results.
+
+        A ``not_found`` address is **not** proof the person has no VAIR
+        account -- unclaimed imported records are excluded from this lookup.
+
+        :param emails: Email addresses to resolve (max 100).
+        :param sport: Optional sport code to scope ratings.
+        :returns: A :class:`MembersByEmailResult` envelope.
+        :raises ValidationError: If the list is empty, holds more than 100
+            addresses, or any address contains a comma.
+
+        Example::
+
+            result = await client.members.get_by_email(
+                ["ada@example.com", "nobody@example.com"]
+            )
+
+            for match in result.matched:
+                member = match.sole  # None when the address is ambiguous
+                if member:
+                    print(match.email, "->", member.member_id)
+
+            print("no VAIR account found for:", result.not_found)
+        """
+        # Validate before the round trip so the caller gets a typed error
+        # rather than a 400 they have to interpret.
+        if not emails:
+            raise ValidationError("At least one email address is required")
+        if len(emails) > _MAX_EMAILS_PER_LOOKUP:
+            raise ValidationError(
+                f"Maximum {_MAX_EMAILS_PER_LOOKUP} email addresses per request"
+            )
+        # A comma inside an entry would split into two addresses server-side
+        # and silently shift every result -- reject it rather than send it.
+        for email in emails:
+            if "," in email:
+                raise ValidationError(
+                    f"Email address must not contain a comma: {email}"
+                )
+
+        params: dict[str, str] = {"emails": ",".join(emails)}
+        if sport:
+            params["sport"] = sport
+        data = await self._client._request(
+            "GET", "/partner/members/by-email", params=params
+        )
+        if not isinstance(data, dict):
+            return MembersByEmailResult()
+        return MembersByEmailResult.model_validate(data)
 
 
 class MatchesResource(_Resource):
