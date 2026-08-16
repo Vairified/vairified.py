@@ -573,6 +573,18 @@ class SearchFilters(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TournamentImportCreatedGhost(BaseModel):
+    """One ghost player created by a tournament import."""
+
+    model_config = _RESPONSE_CONFIG
+
+    #: The email or phone you supplied for this person in ``ghost_members``,
+    #: echoed back so results map onto your own records without a second lookup.
+    ref: str
+    #: The public member id allocated to them, usable in ``matches.submit()``.
+    member_id: int = Field(alias="memberId")
+
+
 class TournamentImportResult(BaseModel):
     """Result of a tournament import submission."""
 
@@ -586,6 +598,18 @@ class TournamentImportResult(BaseModel):
     dry_run: bool | None = Field(default=None, alias="dryRun")
     message: str | None = None
     errors: list[str] | None = None
+    #: Public member ids for the ghost players THIS import created.
+    #:
+    #: Always a list, so it can be iterated without a ``None`` check. Empty on a
+    #: dry-run, which creates nothing, and empty against an older API build.
+    #:
+    #: **Created only.** Entries matched to a player who already existed are
+    #: deliberately absent -- resolving an existing email to a member requires the
+    #: ``key:player:lookup`` scope and ``members.get_by_email()``, and this
+    #: endpoint is not a way around that.
+    created_ghost_members: list[TournamentImportCreatedGhost] = Field(
+        default_factory=list, alias="createdGhostMembers"
+    )
 
 
 # ---------------------------------------------------------------------------
