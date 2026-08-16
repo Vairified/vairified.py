@@ -248,6 +248,41 @@ class TestGetByEmailResponseHandling:
 
     @respx.mock
     @pytest.mark.asyncio
+    async def test_tolerates_a_bare_array_body(self, api_key, base_url):
+        # Not hypothetical: the sibling GET /partner/members?ids= returns a bare
+        # PartnerMember[], so a routing or gateway mistake can land that shape on
+        # this path. The envelope is the whole point of this endpoint, so degrade
+        # to an empty result rather than raising a validation error at the caller.
+        respx.get(f"{base_url}/partner/members/by-email").mock(
+            return_value=Response(200, json=[])
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.members.get_by_email(["a@example.com"])
+
+        assert isinstance(result, MembersByEmailResult)
+        assert result.matched == []
+        assert result.not_found == []
+        assert result.all_resolved is True
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_tolerates_an_empty_body(self, api_key, base_url):
+        # A 200 with no body at all — a proxy or a partial deployment. `_request`
+        # yields None for an empty response, which must not reach model_validate.
+        respx.get(f"{base_url}/partner/members/by-email").mock(
+            return_value=Response(200, content=b"")
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.members.get_by_email(["a@example.com"])
+
+        assert isinstance(result, MembersByEmailResult)
+        assert result.matched == []
+        assert result.not_found == []
+
+    @respx.mock
+    @pytest.mark.asyncio
     async def test_result_is_frozen(self, api_key, base_url):
         respx.get(f"{base_url}/partner/members/by-email").mock(
             return_value=Response(
