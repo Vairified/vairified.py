@@ -16,7 +16,12 @@ import pytest
 import respx
 from httpx import Response
 
-from vairified import AttributionResult, MembersAttributionResult, Vairified, ValidationError
+from vairified import (
+    AttributionResult,
+    MembersAttributionResult,
+    Vairified,
+    ValidationError,
+)
 
 
 class TestReferralsGet:
@@ -223,7 +228,9 @@ class TestReferralsUnexpectedShapes:
 
     @respx.mock
     @pytest.mark.asyncio
-    async def test_get_returns_an_empty_result_for_a_non_dict_body(self, api_key, base_url):
+    async def test_get_returns_an_empty_result_for_a_non_dict_body(
+        self, api_key, base_url
+    ):
         respx.get(f"{base_url}/partner/members/attribution").mock(
             return_value=Response(200, json=[])  # unexpected shape
         )
