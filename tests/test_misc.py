@@ -496,6 +496,52 @@ class TestGetBulk:
 
 
 # ---------------------------------------------------------------------------
+# Member.member_since
+# ---------------------------------------------------------------------------
+
+
+class TestMemberSince:
+    def test_exposes_the_account_creation_date(self):
+        member = Member.model_validate(
+            {
+                "memberId": 4873327,
+                "firstName": "Ada",
+                "lastName": "Lovelace",
+                "fullName": "Ada Lovelace",
+                "displayName": "Ada L.",
+                "memberSince": "2026-08-14",
+                "status": {
+                    "isWheelchair": False,
+                    "isAmbassador": False,
+                    "isConnected": False,
+                },
+            }
+        )
+        assert member.member_since == "2026-08-14"
+
+    def test_is_none_when_absent(self):
+        """
+        Not a failure state: /partner/search deliberately withholds account age,
+        so consumers must handle absence rather than assume a value.
+        """
+        member = Member.model_validate(
+            {
+                "memberId": 4873327,
+                "firstName": "Ada",
+                "lastName": "Lovelace",
+                "fullName": "Ada Lovelace",
+                "displayName": "Ada L.",
+                "status": {
+                    "isWheelchair": False,
+                    "isAmbassador": False,
+                    "isConnected": False,
+                },
+            }
+        )
+        assert member.member_since is None
+
+
+# ---------------------------------------------------------------------------
 # matches.tournament_import()
 # ---------------------------------------------------------------------------
 

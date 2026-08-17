@@ -216,6 +216,18 @@ class Member(BaseModel):
     state: str | None = None
     zip: str | None = None
     country: str | None = None
+    #: The DATE this member's VAIR account was created (``YYYY-MM-DD``, UTC), or
+    #: ``None`` when the endpoint does not supply it.
+    #:
+    #: Present on ``members.get()``, ``members.get_bulk()`` and
+    #: ``members.get_by_email()`` -- the calls where you already know which member
+    #: you asked about. **Never on** ``members.search()``, which is discovery:
+    #: account age is not something you can browse strangers by.
+    #:
+    #: Deliberately a date, not a timestamp. It exists so you can apply a
+    #: new-accounts-only referral rule -- crediting an ambassador only for
+    #: accounts created because of their event.
+    member_since: str | None = Field(default=None, alias="memberSince")
     gender: Gender | None = None
     status: MemberStatus
     sport: dict[str, SportRating] = Field(default_factory=dict)
