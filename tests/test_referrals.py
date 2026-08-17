@@ -16,7 +16,7 @@ import pytest
 import respx
 from httpx import Response
 
-from vairified import Vairified, ValidationError
+from vairified import AttributionResult, MembersAttributionResult, Vairified, ValidationError
 
 
 class TestReferralsGet:
@@ -205,3 +205,55 @@ class TestReferralsAttribute:
                     registration_published_at="2026-08-01",
                     member_ids=list(range(1, 502)),
                 )
+
+
+# ---------------------------------------------------------------------------
+# Unexpected response shapes
+# ---------------------------------------------------------------------------
+
+
+class TestReferralsUnexpectedShapes:
+    """
+    Both methods guard against a response that is not an object. A gateway or a
+    misconfigured proxy can return a list or a bare string with a 200, and the
+    caller should get an empty-but-valid result rather than a validation
+    explosion from deep inside pydantic. Same guard, and same reasoning, as
+    ``rating_updates`` and ``get_by_email``.
+    """
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_get_returns_an_empty_result_for_a_non_dict_body(self, api_key, base_url):
+        respx.get(f"{base_url}/partner/members/attribution").mock(
+            return_value=Response(200, json=[])  # unexpected shape
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.referrals.get([1])
+
+        assert isinstance(result, MembersAttributionResult)
+        # Empty, not "nobody holds credit" — the caller can see it learned nothing.
+        assert result.attributions == []
+        assert result.not_found == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_attribute_returns_zero_attributed_for_a_non_dict_body(
+        self, api_key, base_url
+    ):
+        respx.post(f"{base_url}/partner/ambassador/attribution").mock(
+            return_value=Response(200, json="unexpected")  # unexpected shape
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.referrals.attribute(
+                referral_code="code",
+                registration_published_at="2026-08-01",
+                member_ids=[1],
+            )
+
+        assert isinstance(result, AttributionResult)
+        # Reporting zero attributed is the safe reading: never claim a write
+        # landed when the response could not be understood.
+        assert result.attributed == 0
+        assert result.results == []
