@@ -754,3 +754,99 @@ __all__ = [
     "WebhookDelivery",
     "WebhookDeliveriesResult",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Ambassador referral attribution — Vairified#1130, #1131
+# ---------------------------------------------------------------------------
+
+
+class MemberAttribution(BaseModel):
+    """Who currently earns referral credit for one member."""
+
+    model_config = _RESPONSE_CONFIG
+
+    member_id: int = Field(alias="memberId")
+    #: True when some ambassador already holds credit for this member.
+    attributed: bool
+    #: The member id of the ambassador holding the credit.
+    #:
+    #: Compare it against your own event host's member id to tell "already
+    #: credited to my host -- nothing to do" from "credited to somebody else --
+    #: a person needs to look, because claiming it takes credit from them".
+    #:
+    #: ``None`` both when nobody holds credit and when credit is held by a record
+    #: with no member id of its own, so check :attr:`attributed` to tell those
+    #: apart.
+    ambassador_member_id: int | None = Field(default=None, alias="ambassadorMemberId")
+    #: The date the credit was established (``YYYY-MM-DD``), or ``None``.
+    attributed_at: str | None = Field(default=None, alias="attributedAt")
+
+    @property
+    def is_claimable(self) -> bool:
+        """True when nobody holds credit yet, so this member can be claimed."""
+        return not self.attributed
+
+    def held_by_someone_other_than(self, ambassador_member_id: int) -> bool:
+        """True when credit is held by an ambassador OTHER than the one given."""
+        return self.attributed and self.ambassador_member_id != ambassador_member_id
+
+
+class MembersAttributionResult(BaseModel):
+    """Attribution for a batch of members, plus the ids that matched nothing."""
+
+    model_config = _RESPONSE_CONFIG
+
+    attributions: list[MemberAttribution] = Field(default_factory=list)
+    #: Member ids that matched no member. Read this rather than diffing your
+    #: input against the results -- every id you sent lands in one bucket.
+    not_found: list[int] = Field(default_factory=list, alias="notFound")
+
+    def get(self, member_id: int) -> MemberAttribution | None:
+        """Attribution for one member id, or ``None`` if it was not returned."""
+        return next((a for a in self.attributions if a.member_id == member_id), None)
+
+    @property
+    def claimable(self) -> list[MemberAttribution]:
+        """Members nobody holds credit for yet."""
+        return [a for a in self.attributions if a.is_claimable]
+
+
+class AttributionOutcomeEntry(BaseModel):
+    """What happened to one member in an attribution submission."""
+
+    model_config = _RESPONSE_CONFIG
+
+    member_id: int = Field(alias="memberId")
+    outcome: str
+
+
+class AttributionResult(BaseModel):
+    """Outcome of submitting attribution for a batch of members."""
+
+    model_config = _RESPONSE_CONFIG
+
+    #: How many members were newly attributed by this request.
+    attributed: int
+    #: One entry per member id supplied, in the order supplied.
+    results: list[AttributionOutcomeEntry] = Field(default_factory=list)
+
+    def with_outcome(self, outcome: str) -> list[int]:
+        """Member ids with the given outcome."""
+        return [r.member_id for r in self.results if r.outcome == outcome]
+
+    @property
+    def already_attributed(self) -> list[int]:
+        """
+        Members already credited to somebody. These are the ones worth a human
+        look -- it may be your own host, or it may be another ambassador.
+        """
+        return self.with_outcome("already_attributed")
+
+    @property
+    def predated_event(self) -> list[int]:
+        """
+        Members rejected because their account pre-dates the event's
+        registration page. The event did not recruit them, so no credit is due.
+        """
+        return self.with_outcome("account_predates_event")
