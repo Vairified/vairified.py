@@ -45,6 +45,7 @@ Sub-resources:
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
 
@@ -58,9 +59,11 @@ from vairified.errors import (
     ValidationError,
 )
 from vairified.models import (
+    AttributionResult,
     MatchBatch,
     MatchBatchResult,
     Member,
+    MembersAttributionResult,
     MembersByEmailResult,
     RatingUpdate,
     SearchFilters,
@@ -157,6 +160,7 @@ class Vairified:
         self.oauth = OAuthResource(self)
         self.leaderboard = LeaderboardResource(self)
         self.webhooks = WebhooksResource(self)
+        self.referrals = ReferralsResource(self)
 
     # ---- Context manager ----
 
@@ -260,6 +264,11 @@ def _raise_from_response(response: httpx.Response) -> None:
 # ---------------------------------------------------------------------------
 # Sub-resources
 # ---------------------------------------------------------------------------
+
+
+# Publication dates are exchanged as calendar dates, never timestamps: the rule
+# they feed asks "did this account pre-date my event?", nothing finer.
+_ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class _Resource:
@@ -918,3 +927,122 @@ __all__ = [
     "Vairified",
     "WebhooksResource",
 ]
+
+
+class ReferralsResource(_Resource):
+    """
+    Read and record which ambassador earns referral credit for a player.
+
+    Each method needs its own API-key permission, granted per partner:
+    ``key:referral:read`` for :meth:`get` and ``key:referral:write`` for
+    :meth:`attribute`. Neither is implied by a general read, write or admin
+    key -- reading attribution exposes who recruited whom, and writing it
+    decides who earns commission.
+    """
+
+    async def get(self, member_ids: Sequence[int]) -> MembersAttributionResult:
+        """
+        Who currently earns referral credit for these members.
+
+        Use this before :meth:`attribute` to tell apart the two cases that
+        matter: a member already credited to your own event host (nothing to
+        do) and one credited to a different ambassador (a person should look,
+        because claiming it takes credit from them).
+
+        :param member_ids: Member ids to look up (max 100).
+        :returns: A :class:`MembersAttributionResult` envelope.
+        :raises ValidationError: If the list is empty or holds more than 100 ids.
+
+        Example::
+
+            result = await client.referrals.get([4873327, 4873328])
+
+            for a in result.claimable:
+                print(a.member_id, "has no credit yet")
+
+            print("no such member:", result.not_found)
+        """
+        ids = list(member_ids)
+        if not ids:
+            raise ValidationError("At least one member id is required")
+        if len(ids) > 100:
+            raise ValidationError("Maximum 100 member ids per request")
+
+        data = await self._client._request(
+            "GET",
+            "/partner/members/attribution",
+            params={"memberIds": ",".join(str(i) for i in ids)},
+        )
+        if not isinstance(data, dict):
+            return MembersAttributionResult()
+        return MembersAttributionResult.model_validate(data)
+
+    async def attribute(
+        self,
+        *,
+        referral_code: str,
+        registration_published_at: str,
+        member_ids: Sequence[int],
+    ) -> AttributionResult:
+        """
+        Credit an ambassador for players their event recruited.
+
+        ``registration_published_at`` is the date the event's registration page
+        was **first published**. Accounts created before it did not come from
+        the event and are rejected with ``account_predates_event``. VAIR applies
+        that rule itself, so every partner is held to the same one.
+
+        VAIR cannot verify the date -- it holds no record of your registration
+        pages -- so the value you send is recorded for audit. Send the real one.
+
+        Safe to retry: attribution is one-per-player forever, enforced by the
+        database, so a resubmitted player returns ``already_attributed`` and
+        nothing changes.
+
+        :param referral_code: The ambassador's public referral code.
+        :param registration_published_at: Publication date, ``YYYY-MM-DD``.
+        :param member_ids: Member ids to attribute (max 500).
+        :returns: An :class:`AttributionResult` with one entry per member id.
+        :raises ValidationError: If the code is blank, the list is empty or
+            holds more than 500 ids, or the date is not ``YYYY-MM-DD``.
+
+        Example::
+
+            result = await client.referrals.attribute(
+                referral_code="hillhurst-open",
+                registration_published_at="2026-08-01",
+                member_ids=[4873327, 4873328],
+            )
+
+            print(result.attributed, "newly credited")
+            print("need a human:", result.already_attributed)
+            print("too old to credit:", result.predated_event)
+        """
+        code = referral_code.strip()
+        if not code:
+            raise ValidationError("A referral code is required")
+        # Checked here so a typo fails immediately rather than as a 400 the
+        # caller has to interpret -- and because a wrong date silently changes
+        # who is creditable, which is worse than an outright rejection.
+        if not _ISO_DATE.match(registration_published_at):
+            raise ValidationError(
+                "registration_published_at must be a calendar date formatted YYYY-MM-DD"
+            )
+        ids = list(member_ids)
+        if not ids:
+            raise ValidationError("At least one member id is required")
+        if len(ids) > 500:
+            raise ValidationError("Maximum 500 member ids per request")
+
+        data = await self._client._request(
+            "POST",
+            "/partner/ambassador/attribution",
+            json={
+                "referralCode": code,
+                "registrationPublishedAt": registration_published_at,
+                "memberIds": ids,
+            },
+        )
+        if not isinstance(data, dict):
+            return AttributionResult(attributed=0)
+        return AttributionResult.model_validate(data)

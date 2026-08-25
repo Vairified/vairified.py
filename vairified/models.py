@@ -216,6 +216,18 @@ class Member(BaseModel):
     state: str | None = None
     zip: str | None = None
     country: str | None = None
+    #: The DATE this member's VAIR account was created (``YYYY-MM-DD``, UTC), or
+    #: ``None`` when the endpoint does not supply it.
+    #:
+    #: Present on ``members.get()``, ``members.get_bulk()`` and
+    #: ``members.get_by_email()`` -- the calls where you already know which member
+    #: you asked about. **Never on** ``members.search()``, which is discovery:
+    #: account age is not something you can browse strangers by.
+    #:
+    #: Deliberately a date, not a timestamp. It exists so you can apply a
+    #: new-accounts-only referral rule -- crediting an ambassador only for
+    #: accounts created because of their event.
+    member_since: str | None = Field(default=None, alias="memberSince")
     gender: Gender | None = None
     status: MemberStatus
     sport: dict[str, SportRating] = Field(default_factory=dict)
@@ -573,6 +585,18 @@ class SearchFilters(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class TournamentImportCreatedGhost(BaseModel):
+    """One ghost player created by a tournament import."""
+
+    model_config = _RESPONSE_CONFIG
+
+    #: The email or phone you supplied for this person in ``ghost_members``,
+    #: echoed back so results map onto your own records without a second lookup.
+    ref: str
+    #: The public member id allocated to them, usable in ``matches.submit()``.
+    member_id: int = Field(alias="memberId")
+
+
 class TournamentImportResult(BaseModel):
     """Result of a tournament import submission."""
 
@@ -586,6 +610,18 @@ class TournamentImportResult(BaseModel):
     dry_run: bool | None = Field(default=None, alias="dryRun")
     message: str | None = None
     errors: list[str] | None = None
+    #: Public member ids for the ghost players THIS import created.
+    #:
+    #: Always a list, so it can be iterated without a ``None`` check. Empty on a
+    #: dry-run, which creates nothing, and empty against an older API build.
+    #:
+    #: **Created only.** Entries matched to a player who already existed are
+    #: deliberately absent -- resolving an existing email to a member requires the
+    #: ``key:player:lookup`` scope and ``members.get_by_email()``, and this
+    #: endpoint is not a way around that.
+    created_ghost_members: list[TournamentImportCreatedGhost] = Field(
+        default_factory=list, alias="createdGhostMembers"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -718,3 +754,99 @@ __all__ = [
     "WebhookDelivery",
     "WebhookDeliveriesResult",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Ambassador referral attribution — Vairified#1130, #1131
+# ---------------------------------------------------------------------------
+
+
+class MemberAttribution(BaseModel):
+    """Who currently earns referral credit for one member."""
+
+    model_config = _RESPONSE_CONFIG
+
+    member_id: int = Field(alias="memberId")
+    #: True when some ambassador already holds credit for this member.
+    attributed: bool
+    #: The member id of the ambassador holding the credit.
+    #:
+    #: Compare it against your own event host's member id to tell "already
+    #: credited to my host -- nothing to do" from "credited to somebody else --
+    #: a person needs to look, because claiming it takes credit from them".
+    #:
+    #: ``None`` both when nobody holds credit and when credit is held by a record
+    #: with no member id of its own, so check :attr:`attributed` to tell those
+    #: apart.
+    ambassador_member_id: int | None = Field(default=None, alias="ambassadorMemberId")
+    #: The date the credit was established (``YYYY-MM-DD``), or ``None``.
+    attributed_at: str | None = Field(default=None, alias="attributedAt")
+
+    @property
+    def is_claimable(self) -> bool:
+        """True when nobody holds credit yet, so this member can be claimed."""
+        return not self.attributed
+
+    def held_by_someone_other_than(self, ambassador_member_id: int) -> bool:
+        """True when credit is held by an ambassador OTHER than the one given."""
+        return self.attributed and self.ambassador_member_id != ambassador_member_id
+
+
+class MembersAttributionResult(BaseModel):
+    """Attribution for a batch of members, plus the ids that matched nothing."""
+
+    model_config = _RESPONSE_CONFIG
+
+    attributions: list[MemberAttribution] = Field(default_factory=list)
+    #: Member ids that matched no member. Read this rather than diffing your
+    #: input against the results -- every id you sent lands in one bucket.
+    not_found: list[int] = Field(default_factory=list, alias="notFound")
+
+    def get(self, member_id: int) -> MemberAttribution | None:
+        """Attribution for one member id, or ``None`` if it was not returned."""
+        return next((a for a in self.attributions if a.member_id == member_id), None)
+
+    @property
+    def claimable(self) -> list[MemberAttribution]:
+        """Members nobody holds credit for yet."""
+        return [a for a in self.attributions if a.is_claimable]
+
+
+class AttributionOutcomeEntry(BaseModel):
+    """What happened to one member in an attribution submission."""
+
+    model_config = _RESPONSE_CONFIG
+
+    member_id: int = Field(alias="memberId")
+    outcome: str
+
+
+class AttributionResult(BaseModel):
+    """Outcome of submitting attribution for a batch of members."""
+
+    model_config = _RESPONSE_CONFIG
+
+    #: How many members were newly attributed by this request.
+    attributed: int
+    #: One entry per member id supplied, in the order supplied.
+    results: list[AttributionOutcomeEntry] = Field(default_factory=list)
+
+    def with_outcome(self, outcome: str) -> list[int]:
+        """Member ids with the given outcome."""
+        return [r.member_id for r in self.results if r.outcome == outcome]
+
+    @property
+    def already_attributed(self) -> list[int]:
+        """
+        Members already credited to somebody. These are the ones worth a human
+        look -- it may be your own host, or it may be another ambassador.
+        """
+        return self.with_outcome("already_attributed")
+
+    @property
+    def predated_event(self) -> list[int]:
+        """
+        Members rejected because their account pre-dates the event's
+        registration page. The event did not recruit them, so no credit is due.
+        """
+        return self.with_outcome("account_predates_event")

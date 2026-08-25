@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 import respx
 from httpx import Response
+from pydantic import ValidationError as PydanticValidationError
 
 from vairified import (
     AuthenticationError,
@@ -495,6 +496,52 @@ class TestGetBulk:
 
 
 # ---------------------------------------------------------------------------
+# Member.member_since
+# ---------------------------------------------------------------------------
+
+
+class TestMemberSince:
+    def test_exposes_the_account_creation_date(self):
+        member = Member.model_validate(
+            {
+                "memberId": 4873327,
+                "firstName": "Ada",
+                "lastName": "Lovelace",
+                "fullName": "Ada Lovelace",
+                "displayName": "Ada L.",
+                "memberSince": "2026-08-14",
+                "status": {
+                    "isWheelchair": False,
+                    "isAmbassador": False,
+                    "isConnected": False,
+                },
+            }
+        )
+        assert member.member_since == "2026-08-14"
+
+    def test_is_none_when_absent(self):
+        """
+        Not a failure state: /partner/search deliberately withholds account age,
+        so consumers must handle absence rather than assume a value.
+        """
+        member = Member.model_validate(
+            {
+                "memberId": 4873327,
+                "firstName": "Ada",
+                "lastName": "Lovelace",
+                "fullName": "Ada Lovelace",
+                "displayName": "Ada L.",
+                "status": {
+                    "isWheelchair": False,
+                    "isAmbassador": False,
+                    "isConnected": False,
+                },
+            }
+        )
+        assert member.member_since is None
+
+
+# ---------------------------------------------------------------------------
 # matches.tournament_import()
 # ---------------------------------------------------------------------------
 
@@ -539,6 +586,71 @@ class TestTournamentImport:
         assert result.message == "Import complete"
         assert result.errors is None
         assert b"Austin Open 2026" in route.calls.last.request.content
+        # Absent field must still be iterable — parity with the TypeScript SDK.
+        assert result.created_ghost_members == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_created_ghost_members_are_returned(self, api_key, base_url):
+        """
+        An import used to report only a COUNT of ghosts created, so a partner
+        could cause accounts to exist and address none of them. The ids now come
+        back keyed by the ref the caller supplied (Vairified#1134).
+        """
+        respx.post(f"{base_url}/partner/tournament-import").mock(
+            return_value=Response(
+                200,
+                json={
+                    "success": True,
+                    "matchesImported": 4,
+                    "gamesRecorded": 12,
+                    "ghostPlayersCreated": 2,
+                    "existingPlayersMatched": 6,
+                    "createdGhostMembers": [
+                        {"ref": "player.one@example.com", "memberId": 900001},
+                        {"ref": "+15551234567", "memberId": 900002},
+                    ],
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.matches.tournament_import(
+                {"sport": "pickleball", "matches": []}
+            )
+
+        assert [(g.ref, g.member_id) for g in result.created_ghost_members] == [
+            ("player.one@example.com", 900001),
+            ("+15551234567", 900002),
+        ]
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_created_ghost_members_are_immutable(self, api_key, base_url):
+        """Models are frozen — parity with the TypeScript SDK's Object.freeze."""
+        respx.post(f"{base_url}/partner/tournament-import").mock(
+            return_value=Response(
+                200,
+                json={
+                    "success": True,
+                    "matchesImported": 1,
+                    "gamesRecorded": 1,
+                    "ghostPlayersCreated": 1,
+                    "existingPlayersMatched": 0,
+                    "createdGhostMembers": [
+                        {"ref": "a@example.com", "memberId": 900003}
+                    ],
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.matches.tournament_import(
+                {"sport": "pickleball", "matches": []}
+            )
+
+        with pytest.raises(PydanticValidationError):
+            result.created_ghost_members[0].member_id = 1
 
     @respx.mock
     @pytest.mark.asyncio
