@@ -75,7 +75,10 @@ package_dir = "."
 filename = "CHANGELOG.md"
 directory = "changelog.d"
 title_format = "## [{version}] - {project_date}"
-issue_format = "[#{issue}](https://github.com/Vairified/vairified.py/issues/{issue})"
+# Fragments are named after the issue in the BACKEND repo that drove the change
+# (Vairified/Vairified), which is where the Partner API work is tracked. Pointing
+# these at this repo produced four 404s in the 0.6.0 notes before release.
+issue_format = "[#{issue}](https://github.com/Vairified/Vairified/issues/{issue})"
 start_string = "<!-- towncrier release notes start -->\n"
 underlines = ["", "", ""]
 template = "changelog.d/_template.md.jinja"
