@@ -60,6 +60,10 @@ from vairified.errors import (
 from vairified.models import (
     AttributionOutcomeEntry,
     AttributionResult,
+    Event,
+    EventClub,
+    EventLocation,
+    EventsPage,
     Game,
     Gender,
     Match,
@@ -121,6 +125,10 @@ __all__ = [
     "SportRating",
     "TournamentImportCreatedGhost",
     "TournamentImportResult",
+    "Event",
+    "EventClub",
+    "EventLocation",
+    "EventsPage",
     "WebhookDelivery",
     "WebhookDeliveriesResult",
     # Request models

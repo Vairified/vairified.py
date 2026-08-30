@@ -727,6 +727,90 @@ class WebhookDelivery(BaseModel):
     payload: dict[str, Any]
 
 
+class EventLocation(BaseModel):
+    """
+    Where an event is held.
+
+    ⛔ ``latitude`` and ``longitude`` are ``None`` when the event has never been
+    geocoded — never ``0``. Zero is a real coordinate in the Gulf of Guinea, so a
+    zero fallback would cluster every un-located event on one pin in the ocean,
+    and a map would look like it were working.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    venue_name: str | None = Field(default=None, alias="venueName")
+    address: str | None = None
+    city: str | None = None
+    state: str | None = None
+    zip: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
+
+    @property
+    def has_coordinates(self) -> bool:
+        """Whether this location can be placed on a map."""
+        return self.latitude is not None and self.longitude is not None
+
+    def __repr__(self) -> str:
+        where = self.venue_name or self.city or "unknown"
+        return f"EventLocation({where!r}, coordinates={self.has_coordinates})"
+
+
+class EventClub(BaseModel):
+    """The club organising an event."""
+
+    model_config = _RESPONSE_CONFIG
+
+    name: str
+    city: str | None = None
+    state: str | None = None
+
+    def __repr__(self) -> str:
+        return f"EventClub({self.name!r})"
+
+
+class Event(BaseModel):
+    """
+    An event in the Vairified catalogue.
+
+    ``event_id`` is the integer identifier every event-scoped endpoint takes —
+    the partner API does not accept UUIDs.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    event_id: int = Field(alias="eventId")
+    name: str
+    type: str
+    status: str
+    sport: str
+    start_date: str | None = Field(default=None, alias="startDate")
+    end_date: str | None = Field(default=None, alias="endDate")
+    club: EventClub | None = None
+    location: EventLocation | None = None
+    host_name: str | None = Field(default=None, alias="hostName")
+    is_private: bool = Field(alias="isPrivate")
+    max_spots: int | None = Field(default=None, alias="maxSpots")
+    max_teams: int | None = Field(default=None, alias="maxTeams")
+    created_at: str = Field(alias="createdAt")
+
+    def __repr__(self) -> str:
+        return f"Event({self.event_id}, {self.name!r}, {self.type})"
+
+
+class EventsPage(BaseModel):
+    """A page of events, with the total before pagination."""
+
+    model_config = _RESPONSE_CONFIG
+
+    events: list[Event]
+    total: int
+
+    def __repr__(self) -> str:
+        return f"EventsPage({len(self.events)} of {self.total})"
+
+
 class WebhookDeliveriesResult(BaseModel):
     """Paginated list of webhook delivery attempts."""
 
@@ -737,6 +821,10 @@ class WebhookDeliveriesResult(BaseModel):
 
 
 __all__ = [
+    "Event",
+    "EventClub",
+    "EventLocation",
+    "EventsPage",
     "Gender",
     "Game",
     "Match",
