@@ -60,6 +60,7 @@ from vairified.errors import (
 )
 from vairified.models import (
     AttributionResult,
+    EventsPage,
     MatchBatch,
     MatchBatchResult,
     Member,
@@ -159,6 +160,7 @@ class Vairified:
         self.matches = MatchesResource(self)
         self.oauth = OAuthResource(self)
         self.leaderboard = LeaderboardResource(self)
+        self.events = EventsResource(self)
         self.webhooks = WebhooksResource(self)
         self.referrals = ReferralsResource(self)
 
@@ -854,6 +856,74 @@ class LeaderboardResource(_Resource):
         """List available leaderboard categories, brackets, and scopes."""
         data = await self._client._request("GET", "/leaderboard/categories")
         return data or {}
+
+
+class EventsResource(_Resource):
+    """The event catalogue."""
+
+    async def list(
+        self,
+        *,
+        type: str | None = None,
+        date_from: str | None = None,
+        date_to: str | None = None,
+        lat: float | None = None,
+        lng: float | None = None,
+        radius_miles: float | None = None,
+        limit: int = 20,
+        offset: int = 0,
+    ) -> EventsPage:
+        """
+        List events — what is on, near a point, within a date range.
+
+        ⛔ ``lat``, ``lng`` and ``radius_miles`` go together. Sending one or two
+        of them is rejected by the API rather than ignored, because a
+        half-applied location filter returns events nowhere near the point given
+        while looking like it worked. An event with no coordinates is excluded
+        from a radius search: it cannot be known to be within the radius.
+
+        Dates match on OVERLAP, so a multi-day event is returned when the window
+        falls anywhere inside it.
+
+        :param type: Container type, e.g. ``"TOURNAMENT"``, ``"LEAGUE"``,
+            ``"OPEN_PLAY"``.
+        :param date_from: ISO 8601. Events that have not ended before this.
+        :param date_to: ISO 8601. Events that have not started after this.
+        :param lat: Latitude of the search centre.
+        :param lng: Longitude of the search centre.
+        :param radius_miles: Search radius in miles.
+        :param limit: Results per page (1-100, default 20).
+        :param offset: Pagination offset.
+        :returns: :class:`EventsPage` with the events and the total before
+            pagination.
+
+        Example::
+
+            page = await client.events.list(
+                type="TOURNAMENT", lat=30.2849, lng=-97.7341, radius_miles=25
+            )
+            for event in page.events:
+                where = event.location.city if event.location else "online"
+                print(event.event_id, event.name, where)
+        """
+        params: dict[str, str | int | float] = {"limit": limit, "offset": offset}
+        if type:
+            params["type"] = type
+        if date_from:
+            params["dateFrom"] = date_from
+        if date_to:
+            params["dateTo"] = date_to
+        # `is not None`, not truthiness: latitude 0 is the equator, a real place
+        # somebody may search from, and `if lat:` would silently drop it.
+        if lat is not None:
+            params["lat"] = lat
+        if lng is not None:
+            params["lng"] = lng
+        if radius_miles is not None:
+            params["radiusMiles"] = radius_miles
+
+        data = await self._client._request("GET", "/partner/events", params=params)
+        return EventsPage.model_validate(data)
 
 
 class WebhooksResource(_Resource):
