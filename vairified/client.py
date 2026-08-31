@@ -890,12 +890,16 @@ class EventsResource(_Resource):
         falls anywhere inside it.
 
         :param type: Container type, e.g. ``"TOURNAMENT"``, ``"LEAGUE"``,
-            ``"OPEN_PLAY"``.
+            ``"OPEN_PLAY"``. An unrecognised value is rejected by the API rather
+            than ignored, because a dropped filter returns the whole catalogue and
+            looks exactly like a working request.
         :param date_from: ISO 8601. Events that have not ended before this.
         :param date_to: ISO 8601. Events that have not started after this.
         :param lat: Latitude of the search centre.
         :param lng: Longitude of the search centre.
-        :param radius_miles: Search radius in miles.
+        :param radius_miles: Search radius in miles, **1 to 250**. Above 250 is
+            rejected rather than narrowed, matching the cap the internal events
+            search enforces.
         :param mine: Only the events YOU submitted. Use this to reconcile your own
             catalogue: compare what should be listed against what is, and submit or
             withdraw the difference. Withdrawn listings are not returned.
@@ -938,6 +942,7 @@ class EventsResource(_Resource):
         self,
         *,
         partner_event_id: str,
+        sport_code: str,
         name: str,
         type: str,
         registration_url: str,
@@ -978,6 +983,11 @@ class EventsResource(_Resource):
         key linked to your partner application.
 
         :param partner_event_id: YOUR identifier for this event.
+        :param sport_code: The sport, by its Vairified code — e.g. ``"pickleball"``,
+            ``"padel"``. REQUIRED, with deliberately no default: a submitted event
+            carries no sport of its own, so a default is how the wrong sport gets in
+            quietly and a padel event ends up in the pickleball directory. An
+            unknown code is rejected rather than falling back.
         :param name: Event name, as a player should see it.
         :param type: One of ``"TOURNAMENT"``, ``"LEAGUE"``, ``"OPEN_PLAY"``.
         :param registration_url: Where a player registers. Required.
@@ -1004,6 +1014,7 @@ class EventsResource(_Resource):
         """
         body: dict[str, object] = {
             "partnerEventId": partner_event_id,
+            "sportCode": sport_code,
             "name": name,
             "type": type,
             "registrationUrl": registration_url,
