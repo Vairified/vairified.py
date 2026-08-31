@@ -23,6 +23,7 @@ from vairified import Vairified
 
 SUBMISSION = {
     "partner_event_id": "autumn-doubles-avon",
+    "sport_code": "pickleball",
     "name": "Autumn Doubles - Avon",
     "type": "TOURNAMENT",
     "registration_url": "https://example.com/register/autumn-doubles",
@@ -80,6 +81,22 @@ class TestEventsSubmit:
         assert route.called
         body = json.loads(route.calls[0].request.content)
         assert body["partnerEventId"] == "autumn-doubles-avon"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_sends_the_sport_code(self, api_key, base_url):
+        # A submitted event carries no sport of its own, so an SDK that dropped
+        # this would have every listing read as pickleball whatever was passed.
+        route = respx.post(f"{base_url}/partner/events").mock(
+            return_value=Response(200, json=LISTED)
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.events.submit(**{**SUBMISSION, "sport_code": "padel"})
+
+        assert route.called
+        body = json.loads(route.calls[0].request.content)
+        assert body["sportCode"] == "padel"
 
     @respx.mock
     @pytest.mark.asyncio
