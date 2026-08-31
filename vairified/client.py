@@ -48,6 +48,7 @@ import os
 import re
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import httpx
 
@@ -68,8 +69,10 @@ from vairified.models import (
     MembersByEmailResult,
     RatingUpdate,
     SearchFilters,
+    SubmittedEvent,
     TournamentImportResult,
     WebhookDeliveriesResult,
+    WithdrawnEvent,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
@@ -870,6 +873,7 @@ class EventsResource(_Resource):
         lat: float | None = None,
         lng: float | None = None,
         radius_miles: float | None = None,
+        mine: bool | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> EventsPage:
@@ -886,12 +890,19 @@ class EventsResource(_Resource):
         falls anywhere inside it.
 
         :param type: Container type, e.g. ``"TOURNAMENT"``, ``"LEAGUE"``,
-            ``"OPEN_PLAY"``.
+            ``"OPEN_PLAY"``. An unrecognised value is rejected by the API rather
+            than ignored, because a dropped filter returns the whole catalogue and
+            looks exactly like a working request.
         :param date_from: ISO 8601. Events that have not ended before this.
         :param date_to: ISO 8601. Events that have not started after this.
         :param lat: Latitude of the search centre.
         :param lng: Longitude of the search centre.
-        :param radius_miles: Search radius in miles.
+        :param radius_miles: Search radius in miles, **1 to 250**. Above 250 is
+            rejected rather than narrowed, matching the cap the internal events
+            search enforces.
+        :param mine: Only the events YOU submitted. Use this to reconcile your own
+            catalogue: compare what should be listed against what is, and submit or
+            withdraw the difference. Withdrawn listings are not returned.
         :param limit: Results per page (1-100, default 20).
         :param offset: Pagination offset.
         :returns: :class:`EventsPage` with the events and the total before
@@ -921,9 +932,139 @@ class EventsResource(_Resource):
             params["lng"] = lng
         if radius_miles is not None:
             params["radiusMiles"] = radius_miles
+        if mine:
+            params["mine"] = "true"
 
         data = await self._client._request("GET", "/partner/events", params=params)
         return EventsPage.model_validate(data)
+
+    async def submit(
+        self,
+        *,
+        partner_event_id: str,
+        sport_code: str,
+        name: str,
+        type: str,
+        registration_url: str,
+        description: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        host_name: str | None = None,
+        max_spots: int | None = None,
+        registration_fee: str | None = None,
+        registration_deadline: str | None = None,
+        location: dict[str, object] | None = None,
+    ) -> SubmittedEvent:
+        """
+        Submit one of YOUR events for listing in the Vairified directory.
+
+        Vairified shows the event and sends players to your registration page.
+        No registration and no payment happens on Vairified, and no player data
+        comes back to you through this call.
+
+        ⛔ RE-SUBMITTING IS HOW YOU EDIT. The listing is addressed by
+        ``partner_event_id`` — your own identifier, not Vairified's — so
+        submitting the same one again updates the listing in place. Republish
+        freely whenever a price or a date changes; ``created`` on the result
+        tells you which happened. Your identifiers are scoped to you, so another
+        partner using the same string is a different listing and neither of you
+        can affect the other's.
+
+        ⛔ ONE SUBMISSION IS ONE PLACE AT ONE TIME. An event running at four
+        venues is four submissions, each with its own ``partner_event_id``, its
+        own coordinates and its own ``registration_url``. One row for four
+        venues puts a single pin on a map for an event happening in four places.
+
+        ``latitude`` and ``longitude`` go together — one without the other is
+        rejected, because a listing with half a coordinate cannot be placed and
+        would never appear in a radius search.
+
+        Requires the ``key:event:submit`` scope, granted per partner, and an API
+        key linked to your partner application.
+
+        :param partner_event_id: YOUR identifier for this event.
+        :param sport_code: The sport, by its Vairified code — e.g. ``"pickleball"``,
+            ``"padel"``. REQUIRED, with deliberately no default: a submitted event
+            carries no sport of its own, so a default is how the wrong sport gets in
+            quietly and a padel event ends up in the pickleball directory. An
+            unknown code is rejected rather than falling back.
+        :param name: Event name, as a player should see it.
+        :param type: One of ``"TOURNAMENT"``, ``"LEAGUE"``, ``"OPEN_PLAY"``.
+        :param registration_url: Where a player registers. Required.
+        :param description: Free-text description shown on the listing.
+        :param start_date: ISO 8601.
+        :param end_date: ISO 8601.
+        :param host_name: Who runs it, when not your own name.
+        :param max_spots: Capacity, when there is one.
+        :param registration_fee: Entry price as you display it, e.g. ``"$65"``.
+        :param registration_deadline: ISO 8601.
+        :param location: Venue and coordinates.
+        :returns: :class:`SubmittedEvent` with Vairified's id and whether it was
+            created.
+
+        Example::
+
+            listing = await client.events.submit(
+                partner_event_id="autumn-doubles-avon",
+                name="Autumn Doubles - Avon",
+                type="TOURNAMENT",
+                registration_url="https://example.com/register/autumn-doubles",
+            )
+            print("listed" if listing.created else "updated")
+        """
+        body: dict[str, object] = {
+            "partnerEventId": partner_event_id,
+            "sportCode": sport_code,
+            "name": name,
+            "type": type,
+            "registrationUrl": registration_url,
+        }
+        optional: dict[str, object | None] = {
+            "description": description,
+            "startDate": start_date,
+            "endDate": end_date,
+            "hostName": host_name,
+            "maxSpots": max_spots,
+            "registrationFee": registration_fee,
+            "registrationDeadline": registration_deadline,
+            "location": location,
+        }
+        # `is not None`, not truthiness — the same habit that would drop `lat=0`
+        # in `list` above would drop an empty description a caller meant to send.
+        body.update({k: v for k, v in optional.items() if v is not None})
+
+        data = await self._client._request("POST", "/partner/events", json=body)
+        return SubmittedEvent.model_validate(data)
+
+    async def withdraw(self, partner_event_id: str) -> WithdrawnEvent:
+        """
+        Withdraw one of your listings, addressed by the same ``partner_event_id``
+        you submitted it under.
+
+        ⛔ WITHDRAW WHATEVER STOPS BEING REAL. A programme that is cancelled,
+        finished or unpublished on your own site keeps its directory row until
+        you say otherwise, and that row keeps sending players to a page that no
+        longer takes them. That is worse than never having listed it.
+
+        It is REVERSIBLE: submitting the same ``partner_event_id`` again restores
+        the listing at the same Vairified id, so links you have already shared
+        keep working. It is also IDEMPOTENT — withdrawing something already
+        withdrawn succeeds with ``withdrawn=False``, so a batch is safe to retry.
+
+        You can only withdraw your own. An identifier that is not yours is
+        reported as not found rather than forbidden.
+
+        :param partner_event_id: Your identifier for the listing.
+        :returns: :class:`WithdrawnEvent`
+
+        Example::
+
+            await client.events.withdraw("autumn-doubles-avon")
+        """
+        data = await self._client._request(
+            "DELETE", f"/partner/events/{quote(partner_event_id, safe='')}"
+        )
+        return WithdrawnEvent.model_validate(data)
 
 
 class WebhooksResource(_Resource):

@@ -79,10 +79,12 @@ from vairified.models import (
     RatingUpdate,
     SearchFilters,
     SportRating,
+    SubmittedEvent,
     TournamentImportCreatedGhost,
     TournamentImportResult,
     WebhookDeliveriesResult,
     WebhookDelivery,
+    WithdrawnEvent,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
@@ -137,6 +139,8 @@ __all__ = [
     "MatchBatch",
     "MatchBatchResult",
     "SearchFilters",
+    "SubmittedEvent",
+    "WithdrawnEvent",
     # OAuth primitives
     "AuthorizationResponse",
     "DEFAULT_SCOPES",
