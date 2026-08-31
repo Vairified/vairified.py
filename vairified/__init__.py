@@ -84,6 +84,7 @@ from vairified.models import (
     TournamentImportResult,
     WebhookDeliveriesResult,
     WebhookDelivery,
+    WithdrawnEvent,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
@@ -194,6 +195,7 @@ __all__ = [
     "MatchBatchResult",
     "SearchFilters",
     "SubmittedEvent",
+    "WithdrawnEvent",
     # OAuth primitives
     "AuthorizationResponse",
     "DEFAULT_SCOPES",

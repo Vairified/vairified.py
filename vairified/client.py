@@ -48,6 +48,7 @@ import os
 import re
 from collections.abc import AsyncIterator, Sequence
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote
 
 import httpx
 
@@ -71,6 +72,7 @@ from vairified.models import (
     SubmittedEvent,
     TournamentImportResult,
     WebhookDeliveriesResult,
+    WithdrawnEvent,
 )
 from vairified.oauth import (
     DEFAULT_SCOPES,
@@ -871,6 +873,7 @@ class EventsResource(_Resource):
         lat: float | None = None,
         lng: float | None = None,
         radius_miles: float | None = None,
+        mine: bool | None = None,
         limit: int = 20,
         offset: int = 0,
     ) -> EventsPage:
@@ -893,6 +896,9 @@ class EventsResource(_Resource):
         :param lat: Latitude of the search centre.
         :param lng: Longitude of the search centre.
         :param radius_miles: Search radius in miles.
+        :param mine: Only the events YOU submitted. Use this to reconcile your own
+            catalogue: compare what should be listed against what is, and submit or
+            withdraw the difference. Withdrawn listings are not returned.
         :param limit: Results per page (1-100, default 20).
         :param offset: Pagination offset.
         :returns: :class:`EventsPage` with the events and the total before
@@ -922,6 +928,8 @@ class EventsResource(_Resource):
             params["lng"] = lng
         if radius_miles is not None:
             params["radiusMiles"] = radius_miles
+        if mine:
+            params["mine"] = "true"
 
         data = await self._client._request("GET", "/partner/events", params=params)
         return EventsPage.model_validate(data)
@@ -1016,6 +1024,36 @@ class EventsResource(_Resource):
 
         data = await self._client._request("POST", "/partner/events", json=body)
         return SubmittedEvent.model_validate(data)
+
+    async def withdraw(self, partner_event_id: str) -> WithdrawnEvent:
+        """
+        Withdraw one of your listings, addressed by the same ``partner_event_id``
+        you submitted it under.
+
+        ⛔ WITHDRAW WHATEVER STOPS BEING REAL. A programme that is cancelled,
+        finished or unpublished on your own site keeps its directory row until
+        you say otherwise, and that row keeps sending players to a page that no
+        longer takes them. That is worse than never having listed it.
+
+        It is REVERSIBLE: submitting the same ``partner_event_id`` again restores
+        the listing at the same Vairified id, so links you have already shared
+        keep working. It is also IDEMPOTENT — withdrawing something already
+        withdrawn succeeds with ``withdrawn=False``, so a batch is safe to retry.
+
+        You can only withdraw your own. An identifier that is not yours is
+        reported as not found rather than forbidden.
+
+        :param partner_event_id: Your identifier for the listing.
+        :returns: :class:`WithdrawnEvent`
+
+        Example::
+
+            await client.events.withdraw("autumn-doubles-avon")
+        """
+        data = await self._client._request(
+            "DELETE", f"/partner/events/{quote(partner_event_id, safe='')}"
+        )
+        return WithdrawnEvent.model_validate(data)
 
 
 class WebhooksResource(_Resource):
