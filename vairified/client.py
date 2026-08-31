@@ -68,6 +68,7 @@ from vairified.models import (
     MembersByEmailResult,
     RatingUpdate,
     SearchFilters,
+    SubmittedEvent,
     TournamentImportResult,
     WebhookDeliveriesResult,
 )
@@ -924,6 +925,97 @@ class EventsResource(_Resource):
 
         data = await self._client._request("GET", "/partner/events", params=params)
         return EventsPage.model_validate(data)
+
+    async def submit(
+        self,
+        *,
+        partner_event_id: str,
+        name: str,
+        type: str,
+        registration_url: str,
+        description: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        host_name: str | None = None,
+        max_spots: int | None = None,
+        registration_fee: str | None = None,
+        registration_deadline: str | None = None,
+        location: dict[str, object] | None = None,
+    ) -> SubmittedEvent:
+        """
+        Submit one of YOUR events for listing in the Vairified directory.
+
+        Vairified shows the event and sends players to your registration page.
+        No registration and no payment happens on Vairified, and no player data
+        comes back to you through this call.
+
+        ⛔ RE-SUBMITTING IS HOW YOU EDIT. The listing is addressed by
+        ``partner_event_id`` — your own identifier, not Vairified's — so
+        submitting the same one again updates the listing in place. Republish
+        freely whenever a price or a date changes; ``created`` on the result
+        tells you which happened. Your identifiers are scoped to you, so another
+        partner using the same string is a different listing and neither of you
+        can affect the other's.
+
+        ⛔ ONE SUBMISSION IS ONE PLACE AT ONE TIME. An event running at four
+        venues is four submissions, each with its own ``partner_event_id``, its
+        own coordinates and its own ``registration_url``. One row for four
+        venues puts a single pin on a map for an event happening in four places.
+
+        ``latitude`` and ``longitude`` go together — one without the other is
+        rejected, because a listing with half a coordinate cannot be placed and
+        would never appear in a radius search.
+
+        Requires the ``key:event:submit`` scope, granted per partner, and an API
+        key linked to your partner application.
+
+        :param partner_event_id: YOUR identifier for this event.
+        :param name: Event name, as a player should see it.
+        :param type: One of ``"TOURNAMENT"``, ``"LEAGUE"``, ``"OPEN_PLAY"``.
+        :param registration_url: Where a player registers. Required.
+        :param description: Free-text description shown on the listing.
+        :param start_date: ISO 8601.
+        :param end_date: ISO 8601.
+        :param host_name: Who runs it, when not your own name.
+        :param max_spots: Capacity, when there is one.
+        :param registration_fee: Entry price as you display it, e.g. ``"$65"``.
+        :param registration_deadline: ISO 8601.
+        :param location: Venue and coordinates.
+        :returns: :class:`SubmittedEvent` with Vairified's id and whether it was
+            created.
+
+        Example::
+
+            listing = await client.events.submit(
+                partner_event_id="autumn-doubles-avon",
+                name="Autumn Doubles - Avon",
+                type="TOURNAMENT",
+                registration_url="https://example.com/register/autumn-doubles",
+            )
+            print("listed" if listing.created else "updated")
+        """
+        body: dict[str, object] = {
+            "partnerEventId": partner_event_id,
+            "name": name,
+            "type": type,
+            "registrationUrl": registration_url,
+        }
+        optional: dict[str, object | None] = {
+            "description": description,
+            "startDate": start_date,
+            "endDate": end_date,
+            "hostName": host_name,
+            "maxSpots": max_spots,
+            "registrationFee": registration_fee,
+            "registrationDeadline": registration_deadline,
+            "location": location,
+        }
+        # `is not None`, not truthiness — the same habit that would drop `lat=0`
+        # in `list` above would drop an empty description a caller meant to send.
+        body.update({k: v for k, v in optional.items() if v is not None})
+
+        data = await self._client._request("POST", "/partner/events", json=body)
+        return SubmittedEvent.model_validate(data)
 
 
 class WebhooksResource(_Resource):
