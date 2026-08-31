@@ -938,3 +938,28 @@ class AttributionResult(BaseModel):
         registration page. The event did not recruit them, so no credit is due.
         """
         return self.with_outcome("account_predates_event")
+
+
+class SubmittedEvent(BaseModel):
+    """
+    A listing you submitted for the Vairified directory.
+
+    ``created`` distinguishes the two things a submission can do. A partner that
+    believes it is creating and repeatedly sees ``False`` is reusing a
+    ``partner_event_id`` it did not mean to.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    partner_event_id: str = Field(alias="partnerEventId")
+    """The identifier you supplied, echoed back so a batch can be reconciled."""
+
+    event_id: int = Field(alias="eventId")
+    """Vairified's integer id for the listing. Stable across re-submissions."""
+
+    created: bool
+    """``True`` when this created the listing, ``False`` when it updated one."""
+
+    def __repr__(self) -> str:
+        what = "created" if self.created else "updated"
+        return f"SubmittedEvent({self.partner_event_id!r}, #{self.event_id}, {what})"

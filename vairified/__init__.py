@@ -79,6 +79,7 @@ from vairified.models import (
     RatingUpdate,
     SearchFilters,
     SportRating,
+    SubmittedEvent,
     TournamentImportCreatedGhost,
     TournamentImportResult,
     WebhookDeliveriesResult,
@@ -137,6 +138,7 @@ __all__ = [
     "MatchBatch",
     "MatchBatchResult",
     "SearchFilters",
+    "SubmittedEvent",
     # OAuth primitives
     "AuthorizationResponse",
     "DEFAULT_SCOPES",
