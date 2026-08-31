@@ -781,6 +781,9 @@ class Event(BaseModel):
     model_config = _RESPONSE_CONFIG
 
     event_id: int = Field(alias="eventId")
+
+    partner_event_id: str | None = Field(default=None, alias="partnerEventId")
+    """YOUR identifier, present only on listings you submitted."""
     name: str
     type: str
     status: str
@@ -963,3 +966,28 @@ class SubmittedEvent(BaseModel):
     def __repr__(self) -> str:
         what = "created" if self.created else "updated"
         return f"SubmittedEvent({self.partner_event_id!r}, #{self.event_id}, {what})"
+
+
+class WithdrawnEvent(BaseModel):
+    """
+    A listing you withdrew.
+
+    ``withdrawn`` is ``False`` when it was already withdrawn. That is a success,
+    not an error — a reconciling partner retries whole batches, and "already
+    gone" is the expected state rather than a failure.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    partner_event_id: str = Field(alias="partnerEventId")
+    """The identifier you asked to withdraw, echoed back."""
+
+    event_id: int | None = Field(default=None, alias="eventId")
+    """Vairified's id for the listing that was withdrawn."""
+
+    withdrawn: bool
+    """``True`` when this call withdrew it, ``False`` when it already was."""
+
+    def __repr__(self) -> str:
+        what = "withdrawn" if self.withdrawn else "already withdrawn"
+        return f"WithdrawnEvent({self.partner_event_id!r}, {what})"
