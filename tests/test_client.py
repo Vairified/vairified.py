@@ -47,6 +47,7 @@ def _member_payload(**overrides: Any) -> dict[str, Any]:
         "status": {
             "isWheelchair": False,
             "isAmbassador": False,
+            "isVairPlus": False,
             "isConnected": True,
         },
         "sport": {
@@ -131,6 +132,10 @@ class TestMembersResource:
         assert member.name == "Mike Barker"
         assert member.display_name == "Mike B."
         assert member.gender is Gender.MALE
+        # The flag a partner gating entry on VAIR+ reads. Asserted with
+        # `is False`, not a falsy check: a missing field would pass the
+        # latter and fail the caller.
+        assert member.status.is_vair_plus is False
         assert member.sport["pickleball"].is_vairified is True
         assert member.sport["pickleball"].is_vair_pro is False
         assert member.sport["pickleball"].is_vair_pro_status is None
