@@ -340,7 +340,9 @@ member.last_name                     # "Barker"
 member.gender                        # Gender enum (MALE | FEMALE | OTHER | UNKNOWN)
 member.age
 member.city / state / zip / country
-member.status.is_ambassador          # Global status flags
+member.status.is_wheelchair          # Global status flags
+member.status.is_ambassador
+member.status.is_vair_plus           # holds a PAID VAIR+ membership
 member.status.is_connected
 member.sport                         # dict[str, SportRating]
 member.sports                        # ["pickleball", "padel"] (property)
