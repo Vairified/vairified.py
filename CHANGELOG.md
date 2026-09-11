@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.7.0] - 2026-09-11
+
+### Added
+
+- `MemberStatus.is_vair_plus` reports whether a member currently holds a **paid VAIR+ membership**, so a partner whose events require VAIR+ — NCPA, whose tournaments do — can check entitlement at lookup time instead of keeping its own record of who paid. It is `False` for a member who never bought and for one whose membership has ended, and — deliberately — also `False` during the automatic 30-day trial every new VAIR account receives, since a trial is not a paid membership and treating it as one would admit every brand-new signup. Do not confuse it with the per-sport `is_vair_pro` / `is_rater` on each `SportRating`: that is the VAIR **Pro** certified-rater programme, a different product whose name differs by two characters. Unlike those per-sport flags, which are defaulted as a migration shim, this field is required rather than defaulted — a partner writing `if not member.status.is_vair_plus` would otherwise have a response that omits the field read as a definitive "not a member". This release therefore requires the Partner API deployment that added the field. ([#1236](https://github.com/Vairified/Vairified/issues/1236))
+
 ## [0.6.0] - 2026-08-25
 
 ### Added
