@@ -173,6 +173,25 @@ class MemberStatus(BaseModel):
 
     is_wheelchair: bool = Field(alias="isWheelchair")
     is_ambassador: bool = Field(alias="isAmbassador")
+    is_vair_plus: bool = Field(alias="isVairPlus")
+    """
+    Player currently holds a **paid VAIR+ membership** — the flag to check
+    when a partner requires VAIR+ for entry.
+
+    ``False`` covers both "never bought" and "bought once, no longer
+    active", and is also ``False`` during the automatic 30-day trial every
+    new VAIR account receives: a trial is not a paid membership.
+
+    Unlike the per-sport flags on :class:`SportRating`, this is
+    deliberately **required** rather than defaulted. Those were defaulted
+    as a migration shim; this one gates entry, and a default would let a
+    response that omits the field read as a definitive "not a member".
+    Requires the Partner API release that added it (Vairified#1236).
+
+    Not to be confused with :attr:`SportRating.is_vair_pro` or
+    :attr:`SportRating.is_rater` — that is the VAIR **Pro** certified-rater
+    programme, a different product whose name differs by two characters.
+    """
     is_connected: bool = Field(alias="isConnected")
 
     def __repr__(self) -> str:  # pragma: no cover
@@ -181,6 +200,7 @@ class MemberStatus(BaseModel):
             for name, value in (
                 ("wheelchair", self.is_wheelchair),
                 ("ambassador", self.is_ambassador),
+                ("vair+", self.is_vair_plus),
                 ("connected", self.is_connected),
             )
             if value

@@ -70,7 +70,7 @@ Get a member
    print(member.name)                        # Full name
    print(member.display_name)                # "Mike B."
    print(member.rating_for("pickleball"))    # 3.915
-   print(member.status.is_vairified)         # True
+   print(member.status.is_vair_plus)         # True -- paid VAIR+ membership
 
    # Dict-like access to rating splits
    pb = member.sport["pickleball"]

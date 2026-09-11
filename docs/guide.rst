@@ -83,12 +83,16 @@ pydantic model that represents a partner-facing player record.
    member.zip
    member.country
 
-   # Status flags
-   member.status.is_vairified
+   # Global status flags
    member.status.is_wheelchair
    member.status.is_ambassador
-   member.status.is_rater
+   member.status.is_vair_plus       # holds a PAID VAIR+ membership
    member.status.is_connected
+
+   # VAIRification and VAIR-Pro are PER-SPORT since 0.4.0 (Vairified#783) --
+   # they are not on ``member.status``.
+   member.sport["pickleball"].is_vairified
+   member.sport["pickleball"].is_vair_pro
 
 Multi-sport ratings
 ^^^^^^^^^^^^^^^^^^^

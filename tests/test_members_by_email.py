@@ -35,6 +35,7 @@ def _member_payload(**overrides: Any) -> dict[str, Any]:
         "status": {
             "isWheelchair": False,
             "isAmbassador": False,
+            "isVairPlus": False,
             "isConnected": True,
         },
         "sport": {

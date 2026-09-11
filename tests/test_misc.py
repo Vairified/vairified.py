@@ -36,6 +36,7 @@ def _member_payload(**overrides):
         "status": {
             "isWheelchair": False,
             "isAmbassador": False,
+            "isVairPlus": False,
             "isConnected": False,
         },
         "sport": {},
@@ -513,6 +514,7 @@ class TestMemberSince:
                 "status": {
                     "isWheelchair": False,
                     "isAmbassador": False,
+                    "isVairPlus": False,
                     "isConnected": False,
                 },
             }
@@ -534,6 +536,7 @@ class TestMemberSince:
                 "status": {
                     "isWheelchair": False,
                     "isAmbassador": False,
+                    "isVairPlus": False,
                     "isConnected": False,
                 },
             }
