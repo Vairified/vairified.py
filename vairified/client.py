@@ -46,10 +46,11 @@ from __future__ import annotations
 
 import os
 import re
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import httpx
+from pydantic import ValidationError as PydanticValidationError
 
 from vairified.errors import (
     AuthenticationError,
@@ -65,6 +66,8 @@ from vairified.models import (
     Member,
     MembersAttributionResult,
     MembersByEmailResult,
+    ProvisionMemberInput,
+    ProvisionMembersResult,
     RatingUpdate,
     SearchFilters,
     TournamentImportResult,
@@ -96,6 +99,7 @@ _DEFAULT_BASE_URL = ENVIRONMENTS["production"]
 _DEFAULT_TIMEOUT = 30.0
 _DEFAULT_SEARCH_LIMIT = 20
 _MAX_EMAILS_PER_LOOKUP = 100
+_MAX_MEMBERS_PER_PROVISION = 100
 
 
 # ---------------------------------------------------------------------------
@@ -596,6 +600,91 @@ class MembersResource(_Resource):
         if not isinstance(data, dict):
             return MembersByEmailResult()
         return MembersByEmailResult.model_validate(data)
+
+    async def provision(
+        self,
+        members: Sequence[ProvisionMemberInput | Mapping[str, Any]],
+        *,
+        sport: str | None = None,
+    ) -> ProvisionMembersResult:
+        """
+        Give each person a VAIR identity: report an existing record, or
+        create an unclaimed **ghost** the person later claims by signing up
+        on VAIR with the same email. No VAIR login is created and nobody is
+        emailed.
+
+        **Requires both ``key:member:provision`` and ``key:player:lookup``,
+        on a TRUSTED partner app.** Neither is implied by ``key:read``,
+        ``key:write`` or ``key:admin``.
+
+        Each entry needs ``email`` or ``phone``, plus ``first_name`` and
+        ``last_name``. Entries are independent: a bad one comes back
+        ``invalid`` with a message you can show as written, and the rest
+        still go through.
+
+        **An ``exists`` result never carries an id**, whether the record is a
+        member, several members, or another partner's ghost. Link an
+        existing member only through their own sign-in.
+
+        :param members: People to provision (max 100), as
+            :class:`ProvisionMemberInput` or mappings of the same fields
+            (snake_case or camelCase).
+        :param sport: Sport code that seeds a new ghost's starting rating
+            (e.g. ``"pickleball"``). Send it: without one the ghost has no
+            seed and the engine's default applies to their first match.
+        :returns: A :class:`ProvisionMembersResult`.
+        :raises ValidationError: If the list is empty or holds more than 100
+            entries (before any request is made), an entry has an unknown
+            field, or the API rejects the request's shape.
+        :raises VairifiedError: With ``status_code`` 403 if the key lacks
+            either scope or its app is not TRUSTED.
+
+        Example::
+
+            result = await client.members.provision(
+                [
+                    {
+                        "email": "pat@example.com",
+                        "first_name": "Pat",
+                        "last_name": "Rivera",
+                    }
+                ],
+                sport="pickleball",
+            )
+
+            pat = result.get("pat@example.com")
+            if pat and pat.is_created:
+                save_vair_id(pat.member_id)
+            elif pat and pat.exists:
+                ask_them_to_sign_in_with_vair()
+        """
+        if not members:
+            raise ValidationError("At least one member is required")
+        if len(members) > _MAX_MEMBERS_PER_PROVISION:
+            raise ValidationError(
+                f"Maximum {_MAX_MEMBERS_PER_PROVISION} members per request"
+            )
+        try:
+            inputs = [
+                m
+                if isinstance(m, ProvisionMemberInput)
+                else ProvisionMemberInput.model_validate(m)
+                for m in members
+            ]
+        except PydanticValidationError as exc:
+            raise ValidationError(f"Invalid member entry: {exc}") from exc
+
+        body: dict[str, Any] = {
+            "members": [m.model_dump(by_alias=True, exclude_none=True) for m in inputs]
+        }
+        if sport:
+            body["sport"] = sport
+        data = await self._client._request(
+            "POST", "/partner/members/provision", json=body
+        )
+        if not isinstance(data, dict):
+            return ProvisionMembersResult()
+        return ProvisionMembersResult.model_validate(data)
 
 
 class MatchesResource(_Resource):
