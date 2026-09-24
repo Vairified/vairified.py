@@ -233,6 +233,163 @@ result = await client.matches.tournament_import({
 print(f"Imported {result.matches_imported} matches, {result.ghost_players_created} ghosts")
 ```
 
+## Receiving Webhooks
+
+`verify_webhook()` checks a delivery's signature and hands it back typed. It takes no client
+and no API key — a webhook receiver is an inbound HTTP handler, and often never calls the
+Partner API at all. It is **synchronous**, so it works the same inside an `async` handler and
+outside one.
+
+**Verify on your server, never in a browser or a mobile app.** The signing secret is what
+proves a delivery came from us; anything that ships to a user's device can be read out of it.
+
+```python
+import os
+from vairified import verify_webhook, is_member_status_event, WebhookSignatureError
+
+event = verify_webhook(
+    raw_body,                                  # the exact bytes — see below
+    request.headers.get("X-Vairified-Signature"),
+    os.environ["VAIR_WEBHOOK_SECRET"],
+)
+
+if is_member_status_event(event):
+    entitlements.set(
+        event.data.member_id,
+        vair_plus=event.data.is_vair_plus,
+        ambassador=event.data.is_ambassador,
+    )
+```
+
+### Capture the raw body
+
+The signature covers **the bytes we sent**. A body that has been parsed and re-serialised is
+not those bytes — key order, whitespace and number formatting all move — so every signature
+fails. In FastAPI that means taking `await request.body()` rather than declaring a model
+parameter, which is the trap: the moment the handler asks for a parsed body, the bytes that
+were signed are gone.
+
+```python
+import os
+from fastapi import FastAPI, Request, Response
+from vairified import verify_webhook, WebhookSignatureError, dedupe_key
+
+app = FastAPI()
+
+@app.post("/webhooks/vairified")
+async def vairified_webhook(request: Request) -> Response:
+    try:
+        event = verify_webhook(
+            await request.body(),                      # raw bytes, not a parsed model
+            request.headers.get("X-Vairified-Signature"),
+            [
+                os.environ["VAIR_WEBHOOK_SECRET"],
+                os.environ.get("VAIR_WEBHOOK_SECRET_PREVIOUS"),   # see "Rotating the secret"
+            ],
+        )
+    except WebhookSignatureError:
+        return Response(status_code=400)
+
+    # Queue and return — a slow handler is retried as a failure.
+    await queue.add(dedupe_key(event), event)
+    return Response(status_code=200)
+```
+
+In Flask the equivalent is `request.get_data()`; in Django, `request.body`. `raw_body` accepts
+`bytes` or `str`.
+
+### Handling what arrives
+
+```python
+from vairified import (
+    verify_webhook,
+    is_member_status_event,
+    is_rating_updated_event,
+    is_connection_revoked_event,
+    is_event_created_event,
+)
+
+event = verify_webhook(raw_body, signature_header, os.environ["VAIR_WEBHOOK_SECRET"])
+
+if is_member_status_event(event):
+    ...      # membership or ambassador standing changed
+elif is_rating_updated_event(event):
+    ...      # a new rating, as a full per-sport snapshot
+elif is_connection_revoked_event(event):
+    ...      # the member disconnected your app — stop reading their data
+elif is_event_created_event(event):
+    ...      # a new event was published
+else:
+    ...      # an event type this version does not know about. It still verified,
+             # and arrives as the plain envelope — ignore it, or log it.
+```
+
+An event type the package does not recognise **verifies successfully and is handed over
+as-is**, and so does an unfamiliar value inside one it does recognise. Both grow on the API's
+schedule rather than this package's, and refusing one would break a working receiver over a
+change that is not a break.
+
+> `rating.updated` is **not** `vairified.RatingUpdate`. That model is what
+> `client.members.rating_updates()` returns when you *poll*, and still carries the old
+> per-sport diff. The webhook has sent a full multi-sport snapshot since
+> [Vairified#899](https://github.com/Vairified/Vairified/issues/899). Use
+> `RatingUpdatedEventData`, which `is_rating_updated_event()` narrows to.
+
+### Ordering and duplicates
+
+Delivery is at-least-once, and deliveries can arrive out of order.
+
+```python
+from vairified import is_newer_sequence, is_rating_updated_event
+
+if is_rating_updated_event(event):
+    last = store.get(event.data.member_id)
+    if last and not is_newer_sequence(event.data.sequence, last):
+        return                                          # stale — skip it
+    store.put(event.data.member_id, event.data.sequence)
+```
+
+- **`sequence` is an unpadded decimal string, so do not compare it as one.** `"10000000" >
+  "9999999"` is `False`, which would discard every later delivery for that member from the
+  first power-of-ten crossing onward. `is_newer_sequence()` and `compare_sequence()` compare
+  as integers.
+- **Deduplicate with `dedupe_key(event)`**, which returns the id from the *signed body*. The
+  `X-Vairified-Event-Id` header carries the same value but is outside the signature, so a
+  replayed delivery can present a fresh one and header-based deduplication admits it every
+  time.
+
+### Rotating the secret
+
+`secret` accepts a sequence, and any one match verifies:
+
+```python
+event = verify_webhook(
+    raw_body,
+    signature_header,
+    [os.environ["VAIR_WEBHOOK_SECRET"], os.environ.get("VAIR_WEBHOOK_SECRET_PREVIOUS")],
+)
+```
+
+Deliveries queued before you rotated were signed with the **old** secret and keep arriving for
+hours afterwards. A verifier that knows only the new one discards them silently, so keep the
+previous secret configured until the retry tail has drained.
+
+### Why a delivery was refused
+
+Every refusal is a `WebhookSignatureError` with a `reason` you can branch on:
+
+| `reason` | Means |
+|---|---|
+| `no_secret_configured` | Your configuration, not an attack — almost always an unset environment variable. |
+| `invalid_option` | A tolerance or clock you passed in was not usable. |
+| `missing_signature` | No `X-Vairified-Signature` header. |
+| `malformed_signature` | The header was present but unparseable, or had no `t` / `v1`. |
+| `timestamp_out_of_tolerance` | The delivery's clock and yours disagree by more than the window (5 minutes by default, applied in both directions). |
+| `signature_mismatch` | The body does not match the signature under any secret supplied. |
+| `malformed_body` | The body was not JSON, or a field a partner gates access on was missing or the wrong type. |
+
+The message never contains the secret or either digest.
+
 ## Webhook Deliveries
 
 Inspect recent webhook delivery attempts for your app:
