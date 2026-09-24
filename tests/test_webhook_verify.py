@@ -606,3 +606,140 @@ class TestSourceDiscipline:
         assert is_member_status_event(event)
         with pytest.raises(Exception):
             event.data.is_vair_plus = False  # type: ignore[misc]
+
+
+# ---------------------------------------------------------------------------
+# Divergences CP-2 found by running inputs neither suite covered.
+# Every row here is a case where the two SDKs disagreed before the fix.
+# ---------------------------------------------------------------------------
+
+
+class TestCrossSdkDivergences:
+    def test_a_populated_sports_block_on_member_status(self):
+        # The shape 100% of production traffic has -- all four subscribing
+        # connections hold rating:read -- and it had no Python test at all.
+        body = GOLDEN_BODY.replace(
+            '"vairProStatus":null',
+            '"sports":{"pickleball":{"isVairPro":true,"isRater":true,'
+            '"isVairProStatus":"ACTIVE"}},"vairProStatus":"ACTIVE"',
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_member_status_event(event)
+        assert event.data.sports["pickleball"].is_vair_pro is True
+        assert "padel" not in event.data.sports
+
+    # mutation-checked 2026-09-24: restored `dict[str, SportRating]` on
+    # RatingUpdatedEventData -> 1 red, exactly this row. That import is what made
+    # Python refuse a status value JS accepts.
+    def test_an_unfamiliar_per_sport_status_is_accepted(self):
+        import json
+
+        # The known gap the state matrix already names: expired and revoked
+        # certifications are reported as "sport absent" today, and closing that
+        # adds a status value. A closed Literal here turned that into 400s on the
+        # highest-traffic event, retried ~13 times and then dropped -- for Python
+        # partners only, so it would have looked like one customer's bug.
+        body = json.dumps(
+            {
+                "event": "rating.updated",
+                "eventId": "e",
+                "timestamp": "t",
+                "data": {
+                    "memberId": 1,
+                    "changedAt": "c",
+                    "sequence": "1",
+                    "sports": {
+                        "pickleball": {
+                            "rating": 4.2,
+                            "abbr": "VO",
+                            "ratingSplits": {},
+                            "isVairProStatus": "SUSPENDED",
+                        }
+                    },
+                },
+            }
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_rating_updated_event(event)
+        assert event.data.sports["pickleball"].is_vair_pro_status == "SUSPENDED"
+
+    # mutation-checked 2026-09-24: dropped `value.isascii()` from the timestamp
+    # guard -> 1 red, and it fails with a raw ValueError rather than ours, which
+    # is the whole finding.
+    @pytest.mark.parametrize("digit", ["\u00b2", "\u0663"])
+    def test_a_unicode_digit_in_t_is_our_error_not_a_raw_valueerror(self, digit):
+        # `str.isdigit()` is True for superscripts and Arabic-Indic digits that
+        # `int()` then refuses. Anyone who knows the URL can send one; no secret
+        # needed. The documented handler catches only our error, so a raw
+        # ValueError 500s the receiver.
+        expect_rejection(
+            "malformed_signature",
+            raw_body=GOLDEN_BODY,
+            signature_header=f"t={digit},v1=aa",
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+        )
+
+    # mutation-checked 2026-09-24: replaced `math.isfinite(...)` with a bare
+    # NaN check -> 1 red, and a 31-year-stale delivery verifies again.
+    def test_an_infinite_window_is_refused_not_obeyed(self):
+        # `float("inf")` parses from an env var where JS's `Number("inf")` is
+        # NaN and already refused. Accepting it disables the only replay control
+        # the verifier applies -- and fails open, so nothing warns.
+        expect_rejection(
+            "invalid_option",
+            raw_body=GOLDEN_BODY,
+            signature_header=GOLDEN_HEADER,
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+            tolerance_seconds=float("inf"),
+        )
+
+    # mutation-checked 2026-09-24: removed `strict=True` from _EVENT_CONFIG ->
+    # 3 red, each on a field pydantic silently coerced.
+    @pytest.mark.parametrize(
+        "old,new",
+        [
+            ('"memberId":7204743', '"memberId":"7204743"'),
+            ('"isVairPlus":true', '"isVairPlus":"true"'),
+            ('"memberId":7204743', '"member_id":7204743'),
+        ],
+    )
+    def test_entitlement_fields_are_not_coerced(self, old, new):
+        # Lax pydantic turns "42" into 42 and "false" into False -- inventing a
+        # value for the field that gates paid entry, on input JS refuses.
+        body = GOLDEN_BODY.replace(old, new)
+        expect_rejection(
+            "malformed_body",
+            raw_body=body,
+            signature_header=sign(body, GOLDEN_SECRET, NOW),
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+        )
+
+    def test_an_empty_v1_is_malformed_not_a_mismatch(self):
+        # `bytes.fromhex("")` returns b"" rather than raising, so this reported
+        # "someone is forging requests" for what is a broken header.
+        expect_rejection(
+            "malformed_signature",
+            raw_body=GOLDEN_BODY,
+            signature_header=f"t={GOLDEN_TIMESTAMP},v1=",
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+        )
+
+    def test_an_envelope_failure_reads_like_the_typescript_one(self):
+        body = '{"hello":"world"}'
+        err = expect_rejection(
+            "malformed_body",
+            raw_body=body,
+            signature_header=sign(body, GOLDEN_SECRET, NOW),
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+        )
+        assert "missing a string" in str(err)
+        assert "'None'" not in str(err)

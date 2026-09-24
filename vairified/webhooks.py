@@ -16,8 +16,10 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import math
 import time
 from collections.abc import Sequence
+from typing import TypeGuard
 
 from pydantic import ValidationError
 
@@ -88,7 +90,12 @@ def _parse_signature_header(header: str) -> tuple[int, str, str]:
         if key == "t" and timestamp is None:
             # Reject anything that is not a plain integer. `int()` would happily
             # accept ' 12 ', '+12' and '1_2'.
-            if not value.isdigit():
+            # `isascii()` is load-bearing: `str.isdigit()` is True for
+            # superscripts and other Unicode digit forms that `int()` then
+            # refuses, so without it a crafted header escapes as a raw
+            # ValueError rather than our own error -- past the handler this
+            # function's own docstring tells partners to write.
+            if not (value.isascii() and value.isdigit()):
                 raise WebhookSignatureError(
                     "malformed_signature",
                     f"{SIGNATURE_HEADER} carried a timestamp that is not an integer",
@@ -116,6 +123,11 @@ def _hex_to_bytes(value: str) -> bytes:
         raise WebhookSignatureError(
             "malformed_signature",
             f"{SIGNATURE_HEADER} carried a 'v1' value longer than a SHA-256 digest",
+        )
+    if not value or len(value) % 2:
+        raise WebhookSignatureError(
+            "malformed_signature",
+            f"{SIGNATURE_HEADER} carried a 'v1' value that is not a hex digest",
         )
     try:
         return bytes.fromhex(value)
@@ -212,7 +224,10 @@ def verify_webhook(
         raise WebhookSignatureError(
             "invalid_option", "tolerance_seconds must be a number"
         )
-    if tolerance_seconds != tolerance_seconds or tolerance_seconds < 0:  # NaN or < 0
+    # `isfinite` catches infinity as well as NaN. An infinite window is
+    # accepted by a naive NaN check and silently disables replay protection
+    # entirely -- measured, a delivery 31 years stale verified.
+    if not math.isfinite(tolerance_seconds) or tolerance_seconds < 0:
         raise WebhookSignatureError(
             "invalid_option", "tolerance_seconds must be a finite, non-negative number"
         )
@@ -282,19 +297,26 @@ def verify_webhook(
             return UnknownWebhookEvent.model_validate(parsed)
         return model.model_validate(parsed)  # type: ignore[no-any-return]
     except ValidationError as exc:
-        fields = ", ".join(".".join(str(p) for p in e["loc"]) for e in exc.errors()[:4])
-        raise WebhookSignatureError(
-            "malformed_body",
-            f"A '{event_type}' event is missing a valid '{fields}'",
-        ) from exc
+        first = exc.errors()[0]
+        field = ".".join(str(p) for p in first["loc"])
+        if not isinstance(event_type, str):
+            # Matches the TypeScript wording for an envelope-level failure. The
+            # old text read "A 'None' event is missing ...", which is a confusing
+            # string to leave in a partner's logs.
+            message = f"The webhook body is missing a string '{field}'"
+        else:
+            message = f"A '{event_type}' event is missing a valid '{field}'"
+        raise WebhookSignatureError("malformed_body", message) from exc
 
 
-def is_member_status_event(event: VerifiedWebhookEvent) -> bool:
+def is_member_status_event(event: VerifiedWebhookEvent) -> TypeGuard[MemberStatusEvent]:
     """Narrow a verified event to ``member.status``."""
     return isinstance(event, MemberStatusEvent)
 
 
-def is_connection_revoked_event(event: VerifiedWebhookEvent) -> bool:
+def is_connection_revoked_event(
+    event: VerifiedWebhookEvent,
+) -> TypeGuard[ConnectionRevokedEvent]:
     """Narrow a verified event to ``connection.revoked``.
 
     :rotating_light: ``data.reason`` is an open set -- ``player_deleted`` and
@@ -303,7 +325,9 @@ def is_connection_revoked_event(event: VerifiedWebhookEvent) -> bool:
     return isinstance(event, ConnectionRevokedEvent)
 
 
-def is_rating_updated_event(event: VerifiedWebhookEvent) -> bool:
+def is_rating_updated_event(
+    event: VerifiedWebhookEvent,
+) -> TypeGuard[RatingUpdatedEvent]:
     """Narrow a verified event to ``rating.updated`` -- the event that makes up
     almost all real traffic.
 
@@ -312,7 +336,7 @@ def is_rating_updated_event(event: VerifiedWebhookEvent) -> bool:
     return isinstance(event, RatingUpdatedEvent)
 
 
-def is_event_created_event(event: VerifiedWebhookEvent) -> bool:
+def is_event_created_event(event: VerifiedWebhookEvent) -> TypeGuard[EventCreatedEvent]:
     """Narrow a verified event to ``event.created``.
 
     :rotating_light: ``data.event_id`` is an **int** and is not the envelope's

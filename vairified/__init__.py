@@ -93,6 +93,7 @@ from vairified.oauth import (
     validate_scope,
 )
 
+from .errors import WebhookSignatureError
 from .webhook_models import (
     ConnectionRevokedEvent,
     ConnectionRevokedEventData,
@@ -105,6 +106,7 @@ from .webhook_models import (
     RatingUpdatedEvent,
     RatingUpdatedEventData,
     UnknownWebhookEvent,
+    VerifiedWebhookEvent,
     WebhookEventEnvelope,
 )
 from .webhooks import (
@@ -148,7 +150,9 @@ __all__ = [
     "EventCreatedEventData",
     "EventCreatedClub",
     "UnknownWebhookEvent",
+    "VerifiedWebhookEvent",
     "WebhookEventEnvelope",
+    "WebhookSignatureError",
     # Response models
     "Gender",
     "Member",

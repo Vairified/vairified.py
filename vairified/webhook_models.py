@@ -19,10 +19,9 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .models import SportRating
-
 __all__ = [
     "ConnectionRevokedEvent",
+    "RatingUpdatedSport",
     "ConnectionRevokedEventData",
     "EventCreatedClub",
     "EventCreatedEvent",
@@ -37,8 +36,16 @@ __all__ = [
     "WebhookEventEnvelope",
 ]
 
-_EVENT_CONFIG = ConfigDict(frozen=True, populate_by_name=True, extra="allow")
-"""``extra="allow"`` is load-bearing: a field the API adds tomorrow is carried
+_EVENT_CONFIG = ConfigDict(frozen=True, strict=True, extra="allow")
+"""``strict=True`` stops pydantic coercing what the TypeScript SDK refuses.
+
+In lax mode ``"memberId": "42"`` becomes ``42`` and ``"isVairPlus": "false"``
+becomes ``False`` -- so on identical malformed input one SDK raises and the other
+invents a value for the field that gates paid entry. ``populate_by_name`` is off
+for the same reason: the wire is camelCase, and accepting a snake_case body here
+would accept something JS rejects.
+
+``extra="allow"`` is load-bearing: a field the API adds tomorrow is carried
 through rather than dropped, which is the same forward-compatibility property
 the open string enums give."""
 
@@ -61,11 +68,21 @@ class WebhookEventEnvelope(BaseModel):
 
 
 class MemberStatusEventSport(BaseModel):
-    """One sport's VAIR Pro standing, as carried by a ``member.status`` event."""
+    """One sport's VAIR Pro standing, as carried by a ``member.status`` event.
+
+    :rotating_light: **Every field is optional, deliberately** (PO decision,
+    2026-09-24). The TypeScript SDK validates only the top level of an event and
+    hands nested blocks over as they arrive, so requiring anything here would make
+    Python refuse deliveries JS accepts. The asymmetry matters: a refusal is
+    retried about thirteen times over three hours and then dropped, so the
+    member's status silently stops updating at that partner, while handing the
+    event over costs them one absent field. The fields that gate entitlement are
+    checked at the top level either way.
+    """
 
     model_config = _EVENT_CONFIG
 
-    is_vair_pro: bool = Field(alias="isVairPro")
+    is_vair_pro: bool | None = Field(default=None, alias="isVairPro")
     """Whether the member is an **active** VAIR Pro (certified rater) **in this
     sport** -- the field to check before letting someone rate.
 
@@ -73,9 +90,35 @@ class MemberStatusEventSport(BaseModel):
     rate". Treat only ``True`` as permission. A member certified in pickleball is
     not thereby certified in padel.
     """
-    is_rater: bool = Field(alias="isRater")
+    is_rater: bool | None = Field(default=None, alias="isRater")
     """Documented alias of :attr:`is_vair_pro`, matching ``GET /partner/member``."""
-    is_vair_pro_status: str = Field(alias="isVairProStatus")
+    is_vair_pro_status: str | None = Field(default=None, alias="isVairProStatus")
+    """``"ACTIVE"`` or ``"PENDING"`` today. Deliberately not a ``Literal``."""
+
+
+class RatingUpdatedSport(BaseModel):
+    """One sport's rating standing inside a ``rating.updated`` snapshot.
+
+    :rotating_light: **Deliberately NOT :class:`vairified.models.SportRating`.**
+    That model types its VAIR Pro status as a closed ``Literal["PENDING",
+    "ACTIVE"]``, which *refuses* a value the API may add tomorrow -- and the
+    TypeScript SDK accepts it. Reusing it made the two SDKs disagree on the
+    highest-traffic event: Python returned a 400 the backend then retried ~13
+    times over ~3.4 h before dropping, while JS partners saw nothing wrong.
+
+    Everything here is open or optional for the same reason. The known values are
+    documented; the set is the API's to grow.
+    """
+
+    model_config = _EVENT_CONFIG
+
+    rating: float | None = None
+    abbr: str | None = None
+    rating_splits: dict[str, Any] | None = Field(default=None, alias="ratingSplits")
+    is_vairified: bool | None = Field(default=None, alias="isVairified")
+    is_rater: bool | None = Field(default=None, alias="isRater")
+    is_vair_pro: bool | None = Field(default=None, alias="isVairPro")
+    is_vair_pro_status: str | None = Field(default=None, alias="isVairProStatus")
     """``"ACTIVE"`` or ``"PENDING"`` today. Deliberately not a ``Literal``."""
 
 
@@ -96,6 +139,10 @@ class MemberStatusEventData(BaseModel):
     is_ambassador: bool = Field(alias="isAmbassador")
     sports: dict[str, MemberStatusEventSport] | None = Field(default=None)
     """Per-sport VAIR Pro standing, keyed by sport code.
+
+    An explicit ``null`` on the wire is accepted and read as absent, the same as
+    an omitted key (PO decision, 2026-09-24) -- proxies and serialisers do
+    normalise missing keys into nulls, and both mean "no per-sport data here".
 
     :rotating_light: **``None`` when the member did not grant ``user:rating:read``
     -- absent, not empty.** "We were not permitted to tell you" is a different
@@ -174,7 +221,7 @@ class RatingUpdatedEventData(BaseModel):
     model_config = _EVENT_CONFIG
 
     member_id: int = Field(alias="memberId")
-    sports: dict[str, SportRating] | None = Field(default=None)
+    sports: dict[str, RatingUpdatedSport] | None = Field(default=None)
     """The member's complete rating standing, keyed by sport code, at the moment
     the computation finished -- a **snapshot**, not a diff.
 
