@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.8.0] - 2026-09-24
+
+### Added
+
+- **`verify_webhook()` — verify a webhook delivery and get it back typed.** A partner receiving
+  webhooks previously had to implement the signature scheme from prose and hand-write the event
+  shapes; both now ship in the package. It takes no client and no API key, because a webhook receiver
+  is an inbound HTTP handler that often never calls the Partner API at all, and it is synchronous, so
+  it reads the same inside an `async` handler and outside one. Pass several secrets as a sequence
+  during a rotation — deliveries queued before you rotated were signed with the old secret and keep
+  arriving for hours, so a verifier that knows only the new one discards them silently. The timestamp
+  window applies in **both** directions, so a forged future timestamp is refused exactly as a stale
+  one is. Every refusal is a `WebhookSignatureError` carrying a `reason`, and the message contains
+  neither the secret nor either digest. ([#1275](https://github.com/Vairified/Vairified/issues/1275))
+- **Typed models and type guards for all four webhook event types** — `member.status`,
+  `rating.updated`, `connection.revoked` and `event.created`, reached through
+  `is_member_status_event()`, `is_rating_updated_event()`, `is_connection_revoked_event()` and
+  `is_event_created_event()`. An event type this package does not know **verifies successfully and
+  is handed over as-is**, and so does an unfamiliar value inside one it does know; both grow on the
+  API's schedule rather than this package's, and refusing one would break a working receiver over a
+  change that is not a break. Only the fields a partner gates access on are checked for presence and
+  type — `event`, `eventId` and `timestamp` on every event, plus
+  `memberId`/`isVairPlus`/`isAmbassador` on `member.status` and `memberId`/`sequence` on
+  `rating.updated`. Everything else arrives exactly as sent. A refused delivery is retried and then
+  dropped, so the member's status stops updating at that partner entirely; an unexpected
+  informational field is not worth that. ([#1275](https://github.com/Vairified/Vairified/issues/1275))
+- **`is_newer_sequence()`, `compare_sequence()` and `dedupe_key()` — the ordering and
+  deduplication the documentation used to only describe.** `sequence` is an unpadded decimal string,
+  so the obvious implementation compares strings, and `"10000000" > "9999999"` is `False`: a
+  receiver following the written instruction would discard every later delivery for that member from
+  the first power-of-ten crossing onward, permanently and with no error anywhere. These helpers
+  compare as integers. `dedupe_key()` returns the id from the **signed body**, not the
+  `X-Vairified-Event-Id` header — that header carries the same value but is outside the signature,
+  so a replayed delivery can present a fresh one and header-based deduplication admits it every time.
+  Delivery is at-least-once, so deduplication is the receiver's to do. ([#1275](https://github.com/Vairified/Vairified/issues/1275))
+
+### Fixed
+
+- `vairified.__version__` now tracks the released version. It had read `"0.5.0"`
+  against a tagged `v0.7.0` — two minors stale — because `pyproject.toml` and `__init__.py` are
+  two separate version sources and only one of them was being bumped. Anything reporting the SDK
+  version at runtime, such as a support diagnostic, was naming a release from two versions back.
+
 ## [0.7.0] - 2026-09-11
 
 ### Added
