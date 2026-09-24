@@ -71,6 +71,11 @@ from vairified.models import (
     MembersAttributionResult,
     MembersByEmailResult,
     MemberStatus,
+    ProvisionError,
+    ProvisionErrorCode,
+    ProvisionMemberInput,
+    ProvisionMembersResult,
+    ProvisionResult,
     RatingSplit,
     RatingUpdate,
     SearchFilters,
@@ -93,7 +98,7 @@ from vairified.oauth import (
     validate_scope,
 )
 
-__version__ = "0.5.0"
+__version__ = "0.8.0"
 
 __all__ = [
     # Version
@@ -116,6 +121,11 @@ __all__ = [
     "MemberAttribution",
     "MembersAttributionResult",
     "MembersByEmailResult",
+    "ProvisionError",
+    "ProvisionErrorCode",
+    "ProvisionMemberInput",
+    "ProvisionMembersResult",
+    "ProvisionResult",
     "RatingSplit",
     "RatingUpdate",
     "SportRating",

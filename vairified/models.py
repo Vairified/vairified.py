@@ -27,7 +27,7 @@ from collections.abc import Iterator
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # ---------------------------------------------------------------------------
 # Response config — shared by every read-side model.
@@ -725,6 +725,136 @@ class MembersByEmailResult(BaseModel):
     def member_count(self) -> int:
         """Total number of members across every matched address."""
         return sum(len(m.members) for m in self.matched)
+
+
+# ---------------------------------------------------------------------------
+# Member provisioning
+# ---------------------------------------------------------------------------
+
+
+ProvisionErrorCode = Literal[
+    "MISSING_CONTACT",
+    "MISSING_NAME",
+    "INVALID_EMAIL",
+    "INVALID_BIRTH_DATE",
+    "AGE_OUT_OF_RANGE",
+]
+
+
+class ProvisionMemberInput(BaseModel):
+    """
+    One person to provision with :meth:`MembersResource.provision`.
+
+    Send ``email`` or ``phone`` (or both), plus ``first_name`` and
+    ``last_name``. When both contacts are sent, ``email`` alone is used for
+    matching. ``birth_date`` is ``MM/YYYY`` and must put the person between
+    13 and 99.
+    """
+
+    model_config = _REQUEST_CONFIG
+
+    email: str | None = None
+    phone: str | None = None
+    first_name: str = Field(alias="firstName")
+    last_name: str = Field(alias="lastName")
+    birth_date: str | None = Field(default=None, alias="birthDate")
+    gender: Literal["MALE", "FEMALE", "OTHER"] | None = None
+    city: str | None = None
+    state: str | None = None
+
+
+class ProvisionError(BaseModel):
+    """Why the API refused one entry. ``message`` is safe to show as written."""
+
+    model_config = _RESPONSE_CONFIG
+
+    code: ProvisionErrorCode | str
+    message: str
+
+
+class ProvisionResult(BaseModel):
+    """
+    The outcome for one person in a provision call.
+
+    - ``created``: a VAIR ghost now exists for this person and ``member_id``
+      is theirs, usable at once in ``matches.submit()``. A repeat call
+      returns the same id for a ghost your key created, as long as nobody
+      has claimed it yet, so a retry is safe.
+    - ``exists``: VAIR already holds a record for this contact. **No id is
+      returned**, whoever owns it. The person links their own VAIR account
+      by signing in (OAuth/SSO).
+    - ``invalid``: nothing was created; ``error`` says why.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    #: The email (trimmed, lower-cased), else the phone (trimmed).
+    ref: str
+    status: Literal["created", "exists", "invalid"]
+    #: Present only when ``status`` is ``created``.
+    member_id: int | None = Field(default=None, alias="memberId")
+    #: Present only when ``status`` is ``invalid``.
+    error: ProvisionError | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _id_only_when_created(cls, data: Any) -> Any:
+        # An id on anything but a created ghost would invite linking to a
+        # record the person never authorised; never surface one.
+        if isinstance(data, dict) and data.get("status") != "created":
+            return {k: v for k, v in data.items() if k not in ("memberId", "member_id")}
+        return data
+
+    @property
+    def is_created(self) -> bool:
+        return self.status == "created"
+
+    @property
+    def exists(self) -> bool:
+        return self.status == "exists"
+
+    @property
+    def is_invalid(self) -> bool:
+        return self.status == "invalid"
+
+
+class ProvisionMembersResult(BaseModel):
+    """
+    Result of a :meth:`MembersResource.provision` call.
+
+    One entry per distinct ref, in the order each first appeared. Entries you
+    sent twice (the same email in different case, say) come back once.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    results: list[ProvisionResult] = Field(default_factory=list)
+
+    def get(self, email_or_phone: str) -> ProvisionResult | None:
+        """
+        Look up one person's result by the email or phone you sent.
+
+        Emails match case-insensitively and both are trimmed, the same way
+        the API builds each ``ref``.
+        """
+        trimmed = email_or_phone.strip()
+        needle = trimmed.lower() if "@" in trimmed else trimmed
+        for result in self.results:
+            if result.ref == needle:
+                return result
+        return None
+
+    @property
+    def created(self) -> list[ProvisionResult]:
+        return [r for r in self.results if r.is_created]
+
+    @property
+    def existing(self) -> list[ProvisionResult]:
+        return [r for r in self.results if r.exists]
+
+    @property
+    def invalid(self) -> list[ProvisionResult]:
+        return [r for r in self.results if r.is_invalid]
 
 
 class WebhookDelivery(BaseModel):

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.8.0] - 2026-09-24
+
+### Added
+
+- `client.members.provision()` gives each person a VAIR identity without creating a VAIR login for them: for every entry VAIR either reports that it already holds a record (`exists`), or creates an unclaimed ghost (`created`, with its `member_id`) that the person later claims, with its history, by signing up on VAIR with the same email. Nobody is emailed. It requires **both** `key:member:provision` and `key:player:lookup`, on a **TRUSTED** partner app; neither is implied by `key:read`, `key:write` or `key:admin`, and a missing scope or an untrusted app raises `VairifiedError` with `status_code` 403. **An `exists` result never carries an id**, whether the record is one member, several, or a ghost another partner created, so an existing member is linked only through their own sign-in. Each entry needs `email` or `phone` plus `first_name` and `last_name`; an optional `birth_date` (`MM/YYYY`) must put the person between 13 and 99. A bad entry comes back `invalid` with a `code` and a message that can be shown as written, and the rest of the batch still goes through. The call is safe to retry: a repeat returns `created` with the same `member_id` for a ghost the same key created that nobody has claimed yet. Up to 100 entries per call; the SDK rejects an empty list, more than 100 entries, or an entry with an unknown field before sending. Adds the frozen models `ProvisionMembersResult` (with `.get()`, `.created`, `.existing` and `.invalid`), `ProvisionResult` and `ProvisionError`, the request model `ProvisionMemberInput`, and the `ProvisionErrorCode` type. Requires the Partner API deployment that added `POST /partner/members/provision`.
+
 ## [0.7.0] - 2026-09-11
 
 ### Added
