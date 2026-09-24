@@ -105,15 +105,19 @@ from .webhook_models import (
     MemberStatusEventSport,
     RatingUpdatedEvent,
     RatingUpdatedEventData,
+    RatingUpdatedSport,
     UnknownWebhookEvent,
     VerifiedWebhookEvent,
     WebhookEventEnvelope,
 )
 from .webhooks import (
     DEFAULT_TOLERANCE_SECONDS,
+    compare_sequence,
+    dedupe_key,
     is_connection_revoked_event,
     is_event_created_event,
     is_member_status_event,
+    is_newer_sequence,
     is_rating_updated_event,
     verify_webhook,
 )
@@ -134,6 +138,9 @@ __all__ = [
     # Webhook verification (no client needed)
     "verify_webhook",
     "DEFAULT_TOLERANCE_SECONDS",
+    "compare_sequence",
+    "dedupe_key",
+    "is_newer_sequence",
     "is_member_status_event",
     "is_connection_revoked_event",
     "is_rating_updated_event",
@@ -146,6 +153,7 @@ __all__ = [
     "ConnectionRevokedEventData",
     "RatingUpdatedEvent",
     "RatingUpdatedEventData",
+    "RatingUpdatedSport",
     "EventCreatedEvent",
     "EventCreatedEventData",
     "EventCreatedClub",

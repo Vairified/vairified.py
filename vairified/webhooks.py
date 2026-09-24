@@ -35,6 +35,9 @@ from .webhook_models import (
 
 __all__ = [
     "DEFAULT_TOLERANCE_SECONDS",
+    "compare_sequence",
+    "dedupe_key",
+    "is_newer_sequence",
     "is_connection_revoked_event",
     "is_event_created_event",
     "is_member_status_event",
@@ -51,6 +54,12 @@ signature stays valid forever.
 """
 
 SIGNATURE_HEADER = "X-Vairified-Signature"
+
+
+def _reject_json_constant(name: str) -> None:
+    """Refuse the non-standard JSON constants Python would otherwise accept."""
+    raise ValueError(f"The webhook body contains a non-standard JSON value: {name}")
+
 
 _MAX_SIGNATURE_HEX = 64
 """A SHA-256 digest is 32 bytes; nothing longer can ever match one. Capped before
@@ -200,8 +209,13 @@ def verify_webhook(
     candidates: Sequence[str | None]
     if secret is None or isinstance(secret, str):
         candidates = [secret]
-    else:
+    elif isinstance(secret, (list, tuple)):
         candidates = list(secret)
+    else:
+        # Anything else -- an int from a config object, a file handle -- is a
+        # misconfiguration, not an attack. `list()` on it raised a raw TypeError
+        # past the documented handler.
+        candidates = []
     # `strip()` first: a whitespace-only secret passes a bare length check and is
     # then reported as a signature mismatch, i.e. as an attack.
     secrets = [s for s in candidates if isinstance(s, str) and s.strip()]
@@ -232,7 +246,9 @@ def verify_webhook(
             "invalid_option", "tolerance_seconds must be a finite, non-negative number"
         )
     now = time.time() if now_seconds is None else now_seconds
-    if now != now:  # NaN
+    # `!= itself` catches only NaN; infinity slipped through to the clock
+    # check and was reported as the DELIVERY's clock being wrong.
+    if not math.isfinite(now):
         raise WebhookSignatureError(
             "invalid_option", "now_seconds must be a finite number"
         )
@@ -250,9 +266,17 @@ def verify_webhook(
 
     signature_bytes = _hex_to_bytes(signature)
 
-    body_bytes = (
-        raw_body.encode("utf-8") if isinstance(raw_body, str) else bytes(raw_body)
-    )
+    try:
+        # A lone surrogate in a `str` body raised UnicodeEncodeError straight
+        # past the `except WebhookSignatureError` handler this function's own
+        # docstring tells partners to write.
+        body_bytes = (
+            raw_body.encode("utf-8") if isinstance(raw_body, str) else bytes(raw_body)
+        )
+    except (UnicodeEncodeError, TypeError, ValueError) as exc:
+        raise WebhookSignatureError(
+            "malformed_body", "The webhook body could not be read as bytes"
+        ) from exc
     signed = raw_timestamp.encode("ascii") + b"." + body_bytes
 
     # `compare_digest` rather than `==`: a plain comparison short-circuits on the
@@ -270,8 +294,16 @@ def verify_webhook(
         )
 
     try:
-        parsed = json.loads(signed[len(raw_timestamp) + 1 :].decode("utf-8"))
-    except (ValueError, UnicodeDecodeError) as exc:
+        parsed = json.loads(
+            signed[len(raw_timestamp) + 1 :].decode("utf-8"),
+            # Python's json accepts the non-standard NaN / Infinity / -Infinity
+            # literals and JS's JSON.parse refuses them, so without this the two
+            # SDKs disagree on what is even valid JSON. RecursionError is caught
+            # for the same reason: a deeply nested body raised it, and it is not
+            # a ValueError.
+            parse_constant=_reject_json_constant,
+        )
+    except (ValueError, UnicodeDecodeError, RecursionError) as exc:
         raise WebhookSignatureError(
             "malformed_body", "The webhook body is not valid JSON"
         ) from exc
@@ -344,3 +376,65 @@ def is_event_created_event(event: VerifiedWebhookEvent) -> TypeGuard[EventCreate
     ``data``'s.
     """
     return isinstance(event, EventCreatedEvent)
+
+
+# ---------------------------------------------------------------------------
+# Helpers -- shipped instead of documented
+# ---------------------------------------------------------------------------
+#
+# Everything below replaces an instruction this SDK used to give partners.
+# The reason is one defect: the docs said "keep the highest ``sequence`` and
+# discard anything lower", and ``sequence`` is an unpadded decimal string, so
+# the obvious implementation in either language is a string comparison --
+# ``"10000000" > "9999999"`` is ``False``. At every power-of-ten crossing a
+# partner following our own documentation would discard every later delivery for
+# that member, permanently, with no error anywhere. The code was right; the
+# instruction was wrong, and no test of ours could have caught it.
+#
+# So: wherever we would tell a partner to implement something, we provide it.
+
+
+def compare_sequence(a: str, b: str) -> int:
+    """Compare two ``sequence`` values as integers.
+
+    :returns: negative if ``a`` is older, ``0`` if equal, positive if newer.
+    """
+    x, y = int(a), int(b)
+    return -1 if x < y else (1 if x > y else 0)
+
+
+def is_newer_sequence(incoming: str, last_applied: str | None = None) -> bool:
+    """Whether ``incoming`` is newer than the last value applied **for that member**.
+
+    Use it to discard stale deliveries. ``rating.updated`` carries a full
+    snapshot rather than a diff, so applying an older one last leaves you holding
+    a rating the member no longer has.
+
+    .. code-block:: python
+
+        if is_rating_updated_event(event):
+            last = store.get(event.data.member_id)
+            if last and not is_newer_sequence(event.data.sequence, last):
+                return  # stale
+            store.put(event.data.member_id, event.data.sequence)
+
+    :param last_applied: the highest applied for that member, or ``None`` if
+        none has been -- in which case this is ``True``.
+    """
+    if not last_applied:
+        return True
+    return compare_sequence(incoming, last_applied) > 0
+
+
+def dedupe_key(event: VerifiedWebhookEvent) -> str:
+    """The key to deduplicate a delivery on.
+
+    Delivery is at-least-once, so a retry can present the same event twice. This
+    returns the id **from the signed body**.
+
+    :rotating_light: Calling this is the point. The ``X-Vairified-Event-Id``
+    header carries the same value and is **not covered by the signature**, so an
+    attacker replaying a captured delivery inside the tolerance window can change
+    it freely and header-based deduplication lets it through every time.
+    """
+    return event.event_id

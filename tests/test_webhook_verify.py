@@ -13,9 +13,12 @@ import pytest
 
 from vairified import (
     DEFAULT_TOLERANCE_SECONDS,
+    compare_sequence,
+    dedupe_key,
     is_connection_revoked_event,
     is_event_created_event,
     is_member_status_event,
+    is_newer_sequence,
     is_rating_updated_event,
     verify_webhook,
 )
@@ -494,7 +497,7 @@ class TestAllFourEventTypes:
             body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
         )
         assert is_rating_updated_event(event)
-        assert event.data.sports["pickleball"].rating == 3.58236
+        assert event.data.sports["pickleball"]["rating"] == 3.58236
         # Emitted on EVERY delivery, unlike member.status.
         assert event.data.sequence == "40217"
         assert event.data.rating_data_withheld is None
@@ -627,7 +630,7 @@ class TestCrossSdkDivergences:
             body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
         )
         assert is_member_status_event(event)
-        assert event.data.sports["pickleball"].is_vair_pro is True
+        assert event.data.sports["pickleball"]["isVairPro"] is True
         assert "padel" not in event.data.sports
 
     # mutation-checked 2026-09-24: restored `dict[str, SportRating]` on
@@ -665,7 +668,7 @@ class TestCrossSdkDivergences:
             body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
         )
         assert is_rating_updated_event(event)
-        assert event.data.sports["pickleball"].is_vair_pro_status == "SUSPENDED"
+        assert event.data.sports["pickleball"]["isVairProStatus"] == "SUSPENDED"
 
     # mutation-checked 2026-09-24: dropped `value.isascii()` from the timestamp
     # guard -> 1 red, and it fails with a raw ValueError rather than ours, which
@@ -743,3 +746,124 @@ class TestCrossSdkDivergences:
         )
         assert "missing a string" in str(err)
         assert "'None'" not in str(err)
+
+
+class TestTopLevelOnlyValidation:
+    """The SDK validates the top level of an event and nothing below it.
+
+    PO decision, 2026-09-24. The TypeScript SDK has always worked this way; this
+    suite is what stops Python drifting back to validating the whole tree, which
+    made it refuse payloads JS handed over. A Python refusal is retried about
+    thirteen times over three hours and then dropped, so the member's status
+    silently stops updating at that partner.
+    """
+
+    # mutation-checked 2026-09-24: retyped `sports` back to
+    # `dict[str, MemberStatusEventSport]` -> 4 red, each on a nested shape JS
+    # accepts.
+    @pytest.mark.parametrize(
+        "sports",
+        [
+            '{"pickleball":null}',
+            '{"pickleball":5}',
+            '{"pickleball":{"isVairPro":"yes"}}',
+            '{"pickleball":{}}',
+        ],
+    )
+    def test_an_odd_nested_sport_value_is_handed_over_not_refused(self, sports):
+        body = GOLDEN_BODY.replace(
+            '"vairProStatus":null', f'"sports":{sports},"vairProStatus":null'
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_member_status_event(event)
+        assert "pickleball" in event.data.sports
+
+    def test_the_top_level_is_still_strict(self):
+        # The depth changed; the strictness at the top level did not. These are
+        # the fields that gate paid entry.
+        body = GOLDEN_BODY.replace('"isVairPlus":true', '"isVairPlus":"true"')
+        expect_rejection(
+            "malformed_body",
+            raw_body=body,
+            signature_header=sign(body, GOLDEN_SECRET, NOW),
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+        )
+
+    # mutation-checked 2026-09-24: removed `parse_constant` -> 1 red; Python
+    # accepted a NaN literal JS refuses.
+    def test_a_non_standard_json_constant_is_refused(self):
+        body = GOLDEN_BODY.replace('"memberId":7204743', '"memberId":NaN')
+        expect_rejection(
+            "malformed_body",
+            raw_body=body,
+            signature_header=sign(body, GOLDEN_SECRET, NOW),
+            secret=GOLDEN_SECRET,
+            now_seconds=NOW,
+        )
+
+    # mutation-checked 2026-09-24: restored `candidates = list(secret)` -> 1
+    # red, with a raw TypeError instead of our error.
+    def test_a_non_sequence_secret_is_our_error(self):
+        err = expect_rejection(
+            "no_secret_configured",
+            raw_body=GOLDEN_BODY,
+            signature_header=GOLDEN_HEADER,
+            secret=12345,
+            now_seconds=NOW,
+        )
+        assert isinstance(err, WebhookSignatureError)
+
+    # mutation-checked 2026-09-24: restored `if now != now` -> 1 red; an
+    # infinite clock was reported as the delivery's clock being wrong.
+    def test_an_infinite_clock_is_an_option_error_not_a_clock_error(self):
+        expect_rejection(
+            "invalid_option",
+            raw_body=GOLDEN_BODY,
+            signature_header=GOLDEN_HEADER,
+            secret=GOLDEN_SECRET,
+            now_seconds=float("inf"),
+        )
+
+
+class TestSequenceHelpers:
+    """The helpers that replace the instruction which caused the defect.
+
+    The SDK used to document "keep the highest sequence and discard anything
+    lower". Following that with a string comparison -- the obvious reading --
+    discards every delivery after a power-of-ten crossing, permanently.
+    """
+
+    # mutation-checked 2026-09-24: changed compare_sequence to compare the
+    # strings directly -> 3 red -- every power-of-ten crossing below. The
+    # 40217/40218 pair SURVIVES the mutant, because a string compare happens to
+    # be right when the operands are the same length; that is exactly why the
+    # defect went unnoticed, and why the crossings are the rows that matter.
+    @pytest.mark.parametrize(
+        "older,newer",
+        [("9999999", "10000000"), ("999", "1000"), ("9", "10"), ("40217", "40218")],
+    )
+    def test_a_power_of_ten_crossing_is_ordered_correctly(self, older, newer):
+        # The whole reason this helper exists: `"10000000" > "9999999"` is False.
+        assert is_newer_sequence(newer, older) is True
+        assert is_newer_sequence(older, newer) is False
+        assert compare_sequence(newer, older) > 0
+
+    def test_the_first_delivery_for_a_member_is_always_newer(self):
+        assert is_newer_sequence("1", None) is True
+        assert is_newer_sequence("1", "") is True
+
+    def test_an_identical_sequence_is_not_newer(self):
+        assert is_newer_sequence("40217", "40217") is False
+        assert compare_sequence("40217", "40217") == 0
+
+    def test_dedupe_key_is_the_signed_body_id_not_the_header(self):
+        # The header carries the same value and is outside the signature, so a
+        # partner who calls this cannot reach for the forgeable one.
+        event = verify_webhook(
+            GOLDEN_BODY, GOLDEN_HEADER, GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert dedupe_key(event) == "evt_0000000000000000000000000000abcd"
+        assert dedupe_key(event) == event.event_id

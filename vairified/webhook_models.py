@@ -13,6 +13,17 @@ is wrong the moment the API adds a value -- and it fails in a partner's live
 handler rather than at their type-check step. ``connection.revoked`` carried
 exactly one ``reason`` for its whole life and a second arrived while this file
 was being written. The known values are documented on each field instead.
+
+:rotating_light: **Only the fields a partner gates access on are required**: the envelope's ``event``/``eventId``/``timestamp``, ``member.status``'s
+``memberId``/``isVairPlus``/``isAmbassador``, and ``rating.updated``'s
+``memberId``/``sequence``. Everything else is optional and unvalidated, at every
+depth, so this SDK cannot refuse a delivery the TypeScript one accepts.
+
+Three review rounds found divergences between the two SDKs and **every one was in
+validation; none was in signature verification**. A refusal is retried about
+thirteen times over three hours and then dropped -- the member's status silently
+stops updating at that partner -- so refusing over an informational field costs
+far more than handing it over.
 """
 
 from typing import Any, Literal
@@ -137,11 +148,21 @@ class MemberStatusEventData(BaseModel):
     a different product whose name differs by two characters.
     """
     is_ambassador: bool = Field(alias="isAmbassador")
-    sports: dict[str, MemberStatusEventSport] | None = Field(default=None)
+    sports: Any = Field(default=None)
     """Per-sport VAIR Pro standing, keyed by sport code.
+    :rotating_light: **The per-sport values are NOT validated** (PO decision,
+    2026-09-24). The TypeScript SDK checks only the top level of an event and
+    hands nested blocks over untouched; typing these as models made Python
+    reject payloads JS accepted -- and a Python rejection is retried about
+    thirteen times over three hours and then dropped, so the member's status
+    silently stops updating at that partner. Each value is documented by
+    :class:`MemberStatusEventSport` and can be parsed with it if you want the checking.
+
 
     An explicit ``null`` on the wire is accepted and read as absent, the same as
-    an omitted key (PO decision, 2026-09-24) -- proxies and serialisers do
+    an omitted key (PO decision, 2026-09-24) -- so test the **value**, not the
+    key: ``if data.sports is not None``, never ``if "sports" in ...`` -- proxies and
+    serialisers do
     normalise missing keys into nulls, and both mean "no per-sport data here".
 
     :rotating_light: **``None`` when the member did not grant ``user:rating:read``
@@ -154,7 +175,7 @@ class MemberStatusEventData(BaseModel):
     certification in it. Expired and revoked certifications are not reported, so a
     lapsed rater is indistinguishable here from someone never certified.
     """
-    vair_pro_status: str | None = Field(alias="vairProStatus")
+    vair_pro_status: Any = Field(default=None, alias="vairProStatus")
     """VAIR Pro standing **collapsed across every sport**.
 
     :rotating_light: **This cannot answer "may this person rate my padel event".**
@@ -162,8 +183,8 @@ class MemberStatusEventData(BaseModel):
     a per-sport permission grants a pickleball rater authority over padel. Read
     :attr:`sports` where the sport matters.
     """
-    vairified_rating_status: str = Field(alias="vairifiedRatingStatus")
-    changed_at: str = Field(alias="changedAt")
+    vairified_rating_status: Any = Field(default=None, alias="vairifiedRatingStatus")
+    changed_at: Any = Field(default=None, alias="changedAt")
     sequence: str | None = Field(default=None)
     """Monotonic ordering token.
 
@@ -185,13 +206,13 @@ class ConnectionRevokedEventData(BaseModel):
 
     model_config = _EVENT_CONFIG
 
-    member_id: int | None = Field(default=None, alias="memberId")
+    member_id: Any = Field(default=None, alias="memberId")
     """``None`` for a legacy row that never had a member number assigned."""
-    reason: str
+    reason: Any = None
     """``"player_deleted"`` or ``"player_disconnected"`` today. **Never branch on
     this exhaustively** -- the set grows on the API's schedule, not this package's.
     """
-    revoked_at: str = Field(alias="revokedAt")
+    revoked_at: Any = Field(default=None, alias="revokedAt")
 
 
 class ConnectionRevokedEvent(WebhookEventEnvelope):
@@ -221,14 +242,22 @@ class RatingUpdatedEventData(BaseModel):
     model_config = _EVENT_CONFIG
 
     member_id: int = Field(alias="memberId")
-    sports: dict[str, RatingUpdatedSport] | None = Field(default=None)
+    sports: Any = Field(default=None)
     """The member's complete rating standing, keyed by sport code, at the moment
     the computation finished -- a **snapshot**, not a diff.
+    :rotating_light: **The per-sport values are NOT validated** (PO decision,
+    2026-09-24). The TypeScript SDK checks only the top level of an event and
+    hands nested blocks over untouched; typing these as models made Python
+    reject payloads JS accepted -- and a Python rejection is retried about
+    thirteen times over three hours and then dropped, so the member's status
+    silently stops updating at that partner. Each value is documented by
+    :class:`RatingUpdatedSport` and can be parsed with it if you want the checking.
+
 
     :rotating_light: **``None`` when the partner lacks ``user:rating:read``.**
     Check :attr:`rating_data_withheld` rather than reading absence as "no ratings".
     """
-    changed_at: str = Field(alias="changedAt")
+    changed_at: str | None = Field(default=None, alias="changedAt")
     sequence: str
     """Monotonic ordering token. **Use it to discard stale deliveries.**
 
@@ -238,8 +267,16 @@ class RatingUpdatedEventData(BaseModel):
     **can arrive out of order** -- and applying the older one last leaves you
     holding a rating the member no longer has.
 
-    So: keep the highest ``sequence`` you have applied **per member**, and discard
-    any delivery whose value is lower. Compare it only against other values **for
+    :rotating_light: **Compare it as an INTEGER, never as a string.** It is an
+    unpadded decimal, so a string comparison is lexicographic and
+    ``"10000000" > "9999999"`` is ``False``. At every power-of-ten crossing a
+    string-comparing receiver would discard every later delivery for that member,
+    permanently, and their rating would freeze at the stale value -- which is the
+    exact failure this field exists to prevent. Use ``int(a) > int(b)``.
+
+    So: keep the highest ``sequence`` you have applied **per member**, compared as
+    an integer, and discard any delivery whose value is lower. Compare it only against
+    other values **for
     the same member** -- it comes from a platform-wide counter, so gaps carry no
     meaning and values are not comparable across members. It is a string because
     the value exceeds the safe integer range in some languages.
@@ -248,7 +285,7 @@ class RatingUpdatedEventData(BaseModel):
     ``rating.updated`` carries it on **every** delivery, on both variants -- which
     is why it is required here and optional there.
     """
-    rating_data_withheld: bool | None = Field(default=None, alias="ratingDataWithheld")
+    rating_data_withheld: Any = Field(default=None, alias="ratingDataWithheld")
     """``True`` only on the notification variant, where :attr:`sports` is absent by
     design rather than because nothing changed."""
 
@@ -285,22 +322,22 @@ class EventCreatedEventData(BaseModel):
 
     model_config = _EVENT_CONFIG
 
-    event_id: int = Field(alias="eventId")
-    name: str
-    type: str
-    status: str
-    sport: str
-    start_date: str | None = Field(default=None, alias="startDate")
-    end_date: str | None = Field(default=None, alias="endDate")
-    club: EventCreatedClub | None = None
-    host_name: str | None = Field(default=None, alias="hostName")
-    win_score: int | None = Field(default=None, alias="winScore")
-    win_by: int | None = Field(default=None, alias="winBy")
-    is_private: bool = Field(default=False, alias="isPrivate")
-    max_spots: int | None = Field(default=None, alias="maxSpots")
-    max_teams: int | None = Field(default=None, alias="maxTeams")
-    created_by: str | None = Field(default=None, alias="createdBy")
-    created_at: str = Field(alias="createdAt")
+    event_id: Any = Field(default=None, alias="eventId")
+    name: Any = None
+    type: Any = None
+    status: Any = None
+    sport: Any = None
+    start_date: Any = Field(default=None, alias="startDate")
+    end_date: Any = Field(default=None, alias="endDate")
+    club: Any = None
+    host_name: Any = Field(default=None, alias="hostName")
+    win_score: Any = Field(default=None, alias="winScore")
+    win_by: Any = Field(default=None, alias="winBy")
+    is_private: Any = Field(default=None, alias="isPrivate")
+    max_spots: Any = Field(default=None, alias="maxSpots")
+    max_teams: Any = Field(default=None, alias="maxTeams")
+    created_by: Any = Field(default=None, alias="createdBy")
+    created_at: Any = Field(default=None, alias="createdAt")
 
 
 class EventCreatedEvent(WebhookEventEnvelope):
