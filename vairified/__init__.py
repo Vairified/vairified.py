@@ -93,7 +93,36 @@ from vairified.oauth import (
     validate_scope,
 )
 
-__version__ = "0.5.0"
+from .errors import WebhookSignatureError
+from .webhook_models import (
+    ConnectionRevokedEvent,
+    ConnectionRevokedEventData,
+    EventCreatedClub,
+    EventCreatedEvent,
+    EventCreatedEventData,
+    MemberStatusEvent,
+    MemberStatusEventData,
+    MemberStatusEventSport,
+    RatingUpdatedEvent,
+    RatingUpdatedEventData,
+    RatingUpdatedSport,
+    UnknownWebhookEvent,
+    VerifiedWebhookEvent,
+    WebhookEventEnvelope,
+)
+from .webhooks import (
+    DEFAULT_TOLERANCE_SECONDS,
+    compare_sequence,
+    dedupe_key,
+    is_connection_revoked_event,
+    is_event_created_event,
+    is_member_status_event,
+    is_newer_sequence,
+    is_rating_updated_event,
+    verify_webhook,
+)
+
+__version__ = "0.8.0"
 
 __all__ = [
     # Version
@@ -106,6 +135,32 @@ __all__ = [
     "MembersResource",
     "OAuthResource",
     "WebhooksResource",
+    # Webhook verification (no client needed)
+    "verify_webhook",
+    "DEFAULT_TOLERANCE_SECONDS",
+    "compare_sequence",
+    "dedupe_key",
+    "is_newer_sequence",
+    "is_member_status_event",
+    "is_connection_revoked_event",
+    "is_rating_updated_event",
+    "is_event_created_event",
+    # Webhook event models
+    "MemberStatusEvent",
+    "MemberStatusEventData",
+    "MemberStatusEventSport",
+    "ConnectionRevokedEvent",
+    "ConnectionRevokedEventData",
+    "RatingUpdatedEvent",
+    "RatingUpdatedEventData",
+    "RatingUpdatedSport",
+    "EventCreatedEvent",
+    "EventCreatedEventData",
+    "EventCreatedClub",
+    "UnknownWebhookEvent",
+    "VerifiedWebhookEvent",
+    "WebhookEventEnvelope",
+    "WebhookSignatureError",
     # Response models
     "Gender",
     "Member",
