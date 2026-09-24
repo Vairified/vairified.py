@@ -134,3 +134,44 @@ class OAuthError(VairifiedError):
         """
         super().__init__(message, **kwargs)
         self.error_code = error_code
+
+
+class WebhookSignatureError(VairifiedError):
+    """
+    Raised when a webhook delivery cannot be trusted.
+
+    :rotating_light: **The message never contains the signing secret, the received
+    digest, or the computed one.** Writing either digest into an error puts a valid
+    HMAC of the partner's own payload into their application logs, where it is an
+    oracle for anyone who can read them. Branch on :attr:`reason`; there is
+    deliberately nothing finer-grained to log.
+
+    :ivar reason: Why it was refused. One of:
+
+        ``no_secret_configured``
+            No usable signing secret was supplied. This is **your** configuration,
+            not an attack -- almost always an unset environment variable. Separate
+            from ``signature_mismatch`` on purpose: reporting a missing secret as a
+            mismatch sends people hunting an attacker when the fix is one env var.
+        ``invalid_option``
+            A caller-supplied option was not usable -- a non-numeric or negative
+            tolerance, a NaN clock. Separate from ``timestamp_out_of_tolerance``
+            for the same reason: that one means "this delivery's clock disagrees
+            with yours", and reporting your own typo under it sends people hunting
+            clock skew on a healthy box.
+        ``missing_signature``
+            No ``X-Vairified-Signature`` header at all.
+        ``malformed_signature``
+            Present but unparseable, or missing its ``t`` / ``v1`` parts.
+        ``timestamp_out_of_tolerance``
+            Outside the replay window, in either direction.
+        ``signature_mismatch``
+            Parsed fine; no supplied secret produces this digest.
+        ``malformed_body``
+            Verified, but the body is not JSON, or is not a webhook envelope, or a
+            field the caller will read is absent or the wrong type.
+    """
+
+    def __init__(self, reason: str, message: str) -> None:
+        super().__init__(message)
+        self.reason = reason
