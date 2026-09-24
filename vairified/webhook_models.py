@@ -14,7 +14,8 @@ handler rather than at their type-check step. ``connection.revoked`` carried
 exactly one ``reason`` for its whole life and a second arrived while this file
 was being written. The known values are documented on each field instead.
 
-:rotating_light: **Only the fields a partner gates access on are required**: the envelope's ``event``/``eventId``/``timestamp``, ``member.status``'s
+:rotating_light: **Only the fields a partner gates access on are required**: the
+envelope's ``event``/``eventId``/``timestamp``, ``member.status``'s
 ``memberId``/``isVairPlus``/``isAmbassador``, and ``rating.updated``'s
 ``memberId``/``sequence``. Everything else is optional and unvalidated, at every
 depth, so this SDK cannot refuse a delivery the TypeScript one accepts.
