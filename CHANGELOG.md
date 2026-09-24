@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.8.1] - 2026-09-24
+
+### Added
+
+- `Member.email_verified` says whether a member's email is proven, not just typed: it is `True` only when VAIR's identity provider has verified the address in `member.email` as belonging to this member. Partners that sign people in by email should check it, because an unverified address proves nothing about who holds it. It is `False` whenever `email` is absent (no `profile:email` consent) and against an API build that predates the field, so it can never read as verified by omission. Requires the Partner API deployment that added `emailVerified` to `GET /partner/member`.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

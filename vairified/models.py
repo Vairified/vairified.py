@@ -253,7 +253,25 @@ class Member(BaseModel):
     sport: dict[str, SportRating] = Field(default_factory=dict)
     active_leagues: list[str] | None = Field(default=None, alias="activeLeagues")
     email: str | None = None
+    #: Whether VAIR's identity provider has verified ``email`` as belonging to
+    #: this member. **Sign a person in by email only when this is True**: an
+    #: unverified address is only what was typed. False whenever ``email`` is
+    #: absent (no ``profile:email`` consent) and against an API build that
+    #: predates the field, so it can never read as verified by omission.
+    email_verified: bool = Field(default=False, alias="emailVerified")
     granted_scopes: list[str] | None = Field(default=None, alias="grantedScopes")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _verified_only_with_an_email(cls, data: Any) -> Any:
+        # The flag describes ``email``; without one it must not read as proven.
+        if isinstance(data, dict) and not data.get("email"):
+            return {
+                k: v
+                for k, v in data.items()
+                if k not in ("emailVerified", "email_verified")
+            }
+        return data
 
     # ---- Convenience properties ----
 

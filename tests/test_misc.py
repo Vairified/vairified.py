@@ -822,3 +822,47 @@ class TestWebhookDeliveries:
         assert result.total == 2
         assert len(result.deliveries) == 2
         assert result.deliveries[1].id == "del_002"
+
+
+# ---------------------------------------------------------------------------
+# Member.email_verified
+# ---------------------------------------------------------------------------
+
+
+def _member(**extra: object) -> Member:
+    return Member.model_validate(
+        {
+            "memberId": 4873327,
+            "firstName": "Ada",
+            "lastName": "Lovelace",
+            "fullName": "Ada Lovelace",
+            "displayName": "Ada L.",
+            "status": {
+                "isWheelchair": False,
+                "isAmbassador": False,
+                "isVairPlus": False,
+                "isConnected": True,
+            },
+            **extra,
+        }
+    )
+
+
+class TestMemberEmailVerified:
+    def test_true_only_when_the_api_says_the_email_is_verified(self):
+        member = _member(email="ada@example.com", emailVerified=True)
+        assert member.email_verified is True
+
+    def test_false_for_an_unverified_email(self):
+        assert (
+            _member(email="ada@example.com", emailVerified=False).email_verified
+            is False
+        )
+
+    def test_false_when_the_api_build_predates_the_field(self):
+        assert _member(email="ada@example.com").email_verified is False
+
+    def test_never_true_without_an_email_to_describe(self):
+        member = _member(emailVerified=True)
+        assert member.email is None
+        assert member.email_verified is False
