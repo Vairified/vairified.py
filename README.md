@@ -316,7 +316,8 @@ if is_member_status_event(event):
 elif is_rating_updated_event(event):
     ...      # a new rating, as a full per-sport snapshot
 elif is_connection_revoked_event(event):
-    ...      # the member disconnected your app — stop reading their data
+    ...      # the member's connection to your app ended (event.data.reason says
+             # why) — stop reading their data
 elif is_event_created_event(event):
     ...      # a new event was published
 else:

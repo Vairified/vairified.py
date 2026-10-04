@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.8.1] - 2026-10-04
+
+### Added
+
+- **Two more `connection.revoked` reasons are documented:** `admin_revoked` (Vairified staff
+  ended the connection) and `security_revoked` (a security check ended it; today, a sign-in code
+  used twice). The API now sends both, alongside `player_deleted` and `player_disconnected`, and
+  `ConnectionRevokedEventData.reason` and `is_connection_revoked_event` describe all four. Every
+  reason means the same thing to your receiver: stop reading that member's data. Your own app
+  ending a connection sends no notice.
+
+  Nothing breaks if you are on 0.8.0: `reason` was already untyped, so these values were accepted
+  and passed through before they were documented. As before, never branch on it exhaustively.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added
