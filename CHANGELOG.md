@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Two more `connection.revoked` reasons are documented:** `admin_revoked` (Vairified staff
   ended the connection) and `security_revoked` (a security check ended it; today, a sign-in code
-  used twice). The API now sends both, alongside `player_deleted` and `player_disconnected`, and
+  used twice). The API sends both from the backend release that introduces them, alongside `player_deleted` and `player_disconnected`, and
   `ConnectionRevokedEventData.reason` and `is_connection_revoked_event` describe all four. Every
   reason means the same thing to your receiver: stop reading that member's data. Your own app
   ending a connection sends no notice.
