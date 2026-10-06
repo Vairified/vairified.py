@@ -210,8 +210,19 @@ class ConnectionRevokedEventData(BaseModel):
     member_id: Any = Field(default=None, alias="memberId")
     """``None`` for a legacy row that never had a member number assigned."""
     reason: Any = None
-    """``"player_deleted"`` or ``"player_disconnected"`` today. **Never branch on
-    this exhaustively** -- the set grows on the API's schedule, not this package's.
+    """Why the connection ended. Every value means the same thing to you: stop
+    reading this member's data. The four known today:
+
+    - ``"player_deleted"``: the member's account was erased.
+    - ``"player_disconnected"``: the member clicked Disconnect.
+    - ``"admin_revoked"``: Vairified staff ended the connection.
+    - ``"security_revoked"``: a security check ended it (a sign-in code was used
+      twice, so the connection it created was ended).
+
+    Your own app ending a connection sends nothing; you already know.
+
+    **Never branch on this exhaustively** -- the set grows on the API's schedule,
+    not this package's.
     """
     revoked_at: Any = Field(default=None, alias="revokedAt")
 

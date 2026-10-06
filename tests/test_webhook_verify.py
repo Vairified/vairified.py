@@ -390,6 +390,33 @@ class TestForwardCompatibility:
         assert is_connection_revoked_event(event)
         assert event.data.reason == "player_disconnected"
 
+    @pytest.mark.parametrize(
+        "reason",
+        ["player_deleted", "player_disconnected", "admin_revoked", "security_revoked"],
+    )
+    def test_every_reason_the_api_sends_today_verifies(self, reason):
+        import json
+
+        # The four the API sends (the JS SDK names them in its type; here
+        # `reason` is deliberately untyped, so this pins delivery, not naming).
+        body = json.dumps(
+            {
+                "event": "connection.revoked",
+                "eventId": f"evt_{reason}",
+                "timestamp": "2026-10-04T12:00:00.000Z",
+                "data": {
+                    "memberId": 7204743,
+                    "reason": reason,
+                    "revokedAt": "2026-10-04T12:00:00.000Z",
+                },
+            }
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_connection_revoked_event(event)
+        assert event.data.reason == reason
+
     def test_accepts_an_unfamiliar_vair_pro_status(self):
         body = GOLDEN_BODY.replace(
             '"vairProStatus":null', '"vairProStatus":"SUSPENDED"'

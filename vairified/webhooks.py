@@ -351,8 +351,9 @@ def is_connection_revoked_event(
 ) -> TypeGuard[ConnectionRevokedEvent]:
     """Narrow a verified event to ``connection.revoked``.
 
-    :rotating_light: ``data.reason`` is an open set -- ``player_deleted`` and
-    ``player_disconnected`` today, more later. Never branch on it exhaustively.
+    :rotating_light: ``data.reason`` is an open set -- ``player_deleted``,
+    ``player_disconnected``, ``admin_revoked`` and ``security_revoked`` today, more
+    later. Never branch on it exhaustively.
     """
     return isinstance(event, ConnectionRevokedEvent)
 
