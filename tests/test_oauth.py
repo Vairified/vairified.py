@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 from urllib.parse import parse_qs, urlparse
 
@@ -12,8 +13,10 @@ from httpx import Response
 from vairified import (
     DEFAULT_SCOPES,
     SCOPES,
+    AuthorizationResponse,
     OAuthConfig,
     OAuthError,
+    TokenResponse,
     Vairified,
     describe_scope,
     describe_scopes,
@@ -305,3 +308,35 @@ class TestOAuthResource:
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             scopes = await client.oauth.available_scopes()
         assert scopes == []
+
+
+# ---------------------------------------------------------------------------
+# Model immutability (Vairified#858) — parity with the TS SDK's readonly models
+# ---------------------------------------------------------------------------
+
+
+class TestOAuthModelsFrozen:
+    """The OAuth value objects are frozen (sdk.md: models stay immutable)."""
+
+    def test_oauth_config_is_frozen(self):
+        config = OAuthConfig(api_key="vair_pk_x", redirect_uri="https://app.example/cb")
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            config.api_key = "vair_pk_y"  # type: ignore[misc]
+
+    def test_authorization_response_is_frozen(self):
+        resp = AuthorizationResponse(
+            authorization_url="https://x/authorize", code="abc"
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            resp.code = "def"  # type: ignore[misc]
+
+    def test_token_response_is_frozen(self):
+        token = TokenResponse(
+            access_token="at",
+            refresh_token="rt",
+            expires_in=3600,
+            scope=["user:profile:read"],
+            player_id="p1",
+        )
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            token.access_token = "leaked"  # type: ignore[misc]
