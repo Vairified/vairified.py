@@ -11,7 +11,7 @@ Quickstart::
 
     async with Vairified(api_key="vair_pk_...") as client:
         # Look up a connected player
-        member = await client.members.get("vair_mem_xxx")
+        member = await client.members.get("4873327")
         print(member.display_name, member.rating_for("pickleball"))
 
         # Auto-paginating search
@@ -29,8 +29,8 @@ Quickstart::
             matches=[
                 Match(
                     identifier="m1",
-                    teams=[["vair_mem_aaa", "vair_mem_bbb"],
-                           ["vair_mem_ccc", "vair_mem_ddd"]],
+                    teams=[["4873327", "4873328"],
+                           ["4873329", "4873330"]],
                     games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
                 ),
             ],
@@ -53,9 +53,16 @@ from vairified.errors import (
     AuthenticationError,
     NotFoundError,
     OAuthError,
+    PermissionDeniedError,
     RateLimitError,
     VairifiedError,
     ValidationError,
+)
+from vairified.leaderboard_category import (
+    LEADERBOARD_CATEGORY_LABELS,
+    LeaderboardCategory,
+    LeaderboardCategoryInfo,
+    LeaderboardCategoryLabel,
 )
 from vairified.models import (
     AttributionOutcomeEntry,
@@ -92,6 +99,10 @@ from vairified.oauth import (
     get_authorization_url,
     validate_scope,
 )
+from vairified.partner_search_sort import (
+    PARTNER_SEARCH_SORT_FIELDS,
+    PartnerSearchSortField,
+)
 
 from .errors import WebhookSignatureError
 from .webhook_models import (
@@ -122,7 +133,7 @@ from .webhooks import (
     verify_webhook,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     # Version
@@ -178,12 +189,19 @@ __all__ = [
     "TournamentImportResult",
     "WebhookDelivery",
     "WebhookDeliveriesResult",
+    # Leaderboard tracks
+    "LEADERBOARD_CATEGORY_LABELS",
+    "LeaderboardCategory",
+    "LeaderboardCategoryInfo",
+    "LeaderboardCategoryLabel",
     # Request models
     "Game",
     "Match",
     "MatchBatch",
     "MatchBatchResult",
     "SearchFilters",
+    "PARTNER_SEARCH_SORT_FIELDS",
+    "PartnerSearchSortField",
     # OAuth primitives
     "AuthorizationResponse",
     "DEFAULT_SCOPES",
@@ -199,6 +217,7 @@ __all__ = [
     "AuthenticationError",
     "NotFoundError",
     "OAuthError",
+    "PermissionDeniedError",
     "RateLimitError",
     "ValidationError",
     "VairifiedError",

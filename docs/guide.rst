@@ -12,7 +12,7 @@ Client Lifecycle
 .. code-block:: python
 
    async with Vairified(api_key="vair_pk_xxx") as client:
-       member = await client.members.get("vair_mem_xxx")
+       member = await client.members.get("4873327")
 
 Under the hood this creates a shared ``httpx.AsyncClient`` and closes it
 on exit. For manual lifecycle control:
@@ -21,7 +21,7 @@ on exit. For manual lifecycle control:
 
    client = Vairified(api_key="vair_pk_xxx")
    try:
-       member = await client.members.get("vair_mem_xxx")
+       member = await client.members.get("4873327")
    finally:
        await client.close()
 
@@ -65,7 +65,7 @@ pydantic model that represents a partner-facing player record.
 
 .. code-block:: python
 
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
 
    # Identity
    member.member_id            # Numeric member ID (public)
@@ -115,10 +115,17 @@ sports you requested via the ``sport=`` query filter.
    pb = member.sport["pickleball"]
    pb.rating                          # 3.915 (primary)
    pb.abbr                            # "VO" (primary category)
+   pb.label                           # "VO" (the web app's label, or None)
 
    # Access a specific split
    member.split("overall-open")                         # RatingSplit | None
    member.split("gender-open", sport="pickleball")      # Explicit sport
+   member.split_by_label("VS")                          # By web label
+
+Verified-track splits (``overall-*``, ``gender-*``, ``mixed-*``, ``singles-*``)
+are sent only for a player verified in that sport. For anyone else they are
+absent and the primary rating is the recreational chain (``R`` / ``Rv``); a
+sport with nothing visible is left out of ``member.sport`` entirely.
 
 ``SportRating`` is dict-like
 """"""""""""""""""""""""""""
@@ -139,7 +146,10 @@ without reaching into ``.rating_splits`` directly:
    set(pb.keys())                    # {"overall-open", "gender-open", "singles-open"}
 
    for key, split in pb:
-       print(key, split.rating, split.abbr)
+       print(key, split.rating, split.abbr, split.label)
+
+   pb.by_label("VS")                 # the singles-open split, by web label
+   pb["recreational_gender-open"]    # recreational tracks: RG / RM / RS
 
 Filtering ratings by sport
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -150,11 +160,11 @@ about one sport or want to cut payload size:
 .. code-block:: python
 
    # Just pickleball
-   member = await client.members.get("vair_mem_xxx", sport="pickleball")
+   member = await client.members.get("4873327", sport="pickleball")
 
    # Multiple sports
    member = await client.members.get(
-       "vair_mem_xxx",
+       "4873327",
        sport=["pickleball", "padel"],
    )
 
@@ -180,8 +190,8 @@ results match.
        vairified_only=True,
        age_min=30,
        age_max=40,
-       sort_by="rating",
-       sort_order="desc",
+       sort_by="lastName",           # lastName, firstName, memberId, city, state, country
+       sort_order="asc",
        page_size=50,                 # Server batch size (max 100)
    ):
        print(member.name, member.rating_for("pickleball"))
@@ -252,8 +262,8 @@ Doubles example
        matches=[
            Match(
                identifier="m1",
-               teams=[["vair_mem_aaa", "vair_mem_bbb"],
-                      ["vair_mem_ccc", "vair_mem_ddd"]],
+               teams=[["4873327", "4873328"],
+                      ["4873329", "4873330"]],
                games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
            ),
        ],
@@ -271,7 +281,7 @@ number of teams for round-robin:
    # Singles
    Match(
        identifier="singles-1",
-       teams=[["vair_mem_a"], ["vair_mem_b"]],
+       teams=[["4873327"], ["4873328"]],
        games=[Game(scores=[11, 9]), Game(scores=[11, 7])],
    )
 
@@ -471,7 +481,7 @@ After the user approves, they're redirected back with a ``code`` and
    tokens.refresh_token
    tokens.expires_in
    tokens.scope          # list[str] of granted scopes
-   tokens.player_id      # Connected player's external ID
+   tokens.player_id      # Connected player's member id, as a string ("4873327")
 
    member = await client.members.get(tokens.player_id)
 
@@ -498,7 +508,7 @@ Disconnect a player from your application:
 
 .. code-block:: python
 
-   await client.oauth.revoke("vair_mem_xxx")
+   await client.oauth.revoke("4873327")
 
 Discovering scopes at runtime
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -518,6 +528,8 @@ Read-only leaderboard queries live on ``client.leaderboard``:
 
 .. code-block:: python
 
+   from vairified import LeaderboardCategory
+
    # Global leaderboard
    lb = await client.leaderboard.list(limit=50)
 
@@ -532,16 +544,31 @@ Read-only leaderboard queries live on ``client.leaderboard``:
 
    # A specific player's rank + nearby players
    rank = await client.leaderboard.rank(
-       "vair_mem_xxx",
-       category="doubles",
+       "4873327",
+       sport_code="pickleball",       # rank and percentile are per sport
+       category="overall",
        age_bracket="open",
        scope="global",
        context_size=5,
    )
    print(f"#{rank['rank']} (top {rank['percentile']:.1f}%)")
 
-   # Discover valid category / bracket / scope values
+   # Recreational same-gender doubles -- a code, an enum member, or a label
+   rg = await client.leaderboard.list(category=LeaderboardCategory.RECREATIONAL_GENDER)
+   rg = await client.leaderboard.list(category="RG")
+
+   # The eight tracks as typed models
+   for track in await client.leaderboard.category_list():
+       print(track.code, track.label, track.verified_only)
+
+   # Discover valid category / bracket / scope values (raw body)
    categories = await client.leaderboard.categories()
+
+Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
+players verified in the sport; rank and percentile are scoped to the sport. The
+routes are public, but the key the SDK sends is checked: invalid or revoked
+raises ``AuthenticationError``, missing ``leaderboard:read`` raises
+``PermissionDeniedError``.
 
 API Usage Statistics
 --------------------
@@ -564,7 +591,7 @@ This has a few practical implications:
 
 .. code-block:: python
 
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
    member.first_name = "Changed"     # ValidationError
 
 **Forward compatible** — unknown fields from the server are preserved,
@@ -603,16 +630,17 @@ Error Handling
 
 The SDK maps HTTP status codes to typed exceptions:
 
-========  ========================  ================================
-Status    Exception                 Meaning
-========  ========================  ================================
-400       ``ValidationError``       Bad request, invalid input
-401       ``AuthenticationError``   Invalid or missing API key
-404       ``NotFoundError``         Resource not found
-429       ``RateLimitError``        Rate limit exceeded
-5xx       ``VairifiedError``        Server error (generic)
-—         ``OAuthError``            OAuth-specific failure
-========  ========================  ================================
+========  ===========================  ================================
+Status    Exception                    Meaning
+========  ===========================  ================================
+400       ``ValidationError``          Bad request, invalid input
+401       ``AuthenticationError``      Invalid or missing API key
+403       ``PermissionDeniedError``    Missing scope / not connected
+404       ``NotFoundError``            Resource not found
+429       ``RateLimitError``           Rate limit exceeded
+5xx       ``VairifiedError``           Server error (generic)
+—         ``OAuthError``               OAuth-specific failure
+========  ===========================  ================================
 
 All typed exceptions inherit from :class:`~vairified.errors.VairifiedError`,
 so a single ``except VairifiedError`` catches everything.
@@ -623,17 +651,20 @@ so a single ``except VairifiedError`` catches everything.
        VairifiedError,
        RateLimitError,
        AuthenticationError,
+       PermissionDeniedError,
        NotFoundError,
        ValidationError,
        OAuthError,
    )
 
    try:
-       member = await client.members.get("vair_mem_xxx")
+       member = await client.members.get("4873327")
    except RateLimitError as e:
        print(f"Rate limited; retry after {e.retry_after}s")
    except AuthenticationError:
        print("Invalid API key")
+   except PermissionDeniedError:
+       print("Key lacks the scope, or the player has not connected")
    except NotFoundError:
        print("Member not found")
    except ValidationError as e:

@@ -43,7 +43,7 @@ The SDK uses an async context manager. Opening it creates the underlying
 
    async def main() -> None:
        async with Vairified(api_key="vair_pk_xxx") as client:
-           member = await client.members.get("vair_mem_xxx")
+           member = await client.members.get("4873327")
            print(member.name, "rated", member.rating_for("pickleball"))
 
    asyncio.run(main())
@@ -65,7 +65,7 @@ Get a member
 
 .. code-block:: python
 
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
 
    print(member.name)                        # Full name
    print(member.display_name)                # "Mike B."
@@ -121,8 +121,8 @@ schema.
        matches=[
            Match(
                identifier="m1",
-               teams=[["vair_mem_aaa", "vair_mem_bbb"],
-                      ["vair_mem_ccc", "vair_mem_ddd"]],
+               teams=[["4873327", "4873328"],
+                      ["4873329", "4873330"]],
                games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
            ),
        ],
@@ -200,7 +200,7 @@ The SDK provides typed exceptions you can catch individually:
    )
 
    try:
-       member = await client.members.get("vair_mem_xxx")
+       member = await client.members.get("4873327")
    except RateLimitError as e:
        print(f"Rate limited; retry after {e.retry_after} seconds")
    except AuthenticationError:

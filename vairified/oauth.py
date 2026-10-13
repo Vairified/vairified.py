@@ -82,7 +82,8 @@ class TokenResponse:
     :ivar refresh_token: Refresh token for obtaining new access tokens.
     :ivar expires_in: Token expiration in seconds.
     :ivar scope: Granted scopes.
-    :ivar player_id: Connected player's external ID.
+    :ivar player_id: Connected player's member id, as a string
+        (e.g. ``"4873327"``).
     """
 
     access_token: str

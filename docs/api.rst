@@ -19,6 +19,21 @@ Models
    :undoc-members:
    :show-inheritance:
 
+Leaderboard tracks
+------------------
+
+.. automodule:: vairified.leaderboard_category
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Search sorting
+--------------
+
+.. automodule:: vairified.partner_search_sort
+   :members:
+   :undoc-members:
+
 OAuth
 -----
 

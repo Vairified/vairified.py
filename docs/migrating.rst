@@ -9,6 +9,8 @@ See the `CHANGELOG
 <https://github.com/Vairified/vairified.py/blob/main/CHANGELOG.md>`_
 for the full release notes.
 
+Upgrading from 0.8.x? See `Migrating from 0.8.x to 0.9.0`_ at the end.
+
 At a glance
 -----------
 
@@ -44,12 +46,12 @@ replaces the flat ``client.xxx`` methods:
 .. code-block:: python
 
    # Before
-   member = await client.get_member("vair_mem_xxx")
+   member = await client.get_member("4873327")
    results = await client.search(city="Austin")
    result = await client.submit_match(match)
 
    # After
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
    async for member in client.members.search(city="Austin"):
        ...
    result = await client.matches.submit(batch)
@@ -93,14 +95,14 @@ filter:
 .. code-block:: python
 
    # All sports this player has ratings in
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
 
    # Just pickleball
-   member = await client.members.get("vair_mem_xxx", sport="pickleball")
+   member = await client.members.get("4873327", sport="pickleball")
 
    # Multiple sports
    member = await client.members.get(
-       "vair_mem_xxx",
+       "4873327",
        sport=["pickleball", "padel"],
    )
 
@@ -251,3 +253,62 @@ Use ``env=`` instead of writing the full base URL by hand:
 
 Supported values: ``"production"`` (default), ``"staging"``, ``"local"``.
 Reads ``VAIRIFIED_ENV`` from the environment when not supplied.
+
+Migrating from 0.8.x to 0.9.0
+=============================
+
+0.9.0 removes and renames nothing. Three changes can affect existing code.
+
+``sort_by`` only accepts the sortable fields
+--------------------------------------------
+
+``members.search(sort_by=...)`` and ``SearchFilters.sort_field`` are typed
+``PartnerSearchSortField``, a ``Literal["lastName", "firstName", "memberId",
+"city", "state", "country"]``. The API now refuses any other value with a 400;
+``"rating"`` never worked and always failed with a 500. The narrowing is for type
+checkers only. A plain ``str`` still runs, but mypy / pyright flag it. Check the
+value against the exported tuple:
+
+.. code-block:: python
+
+   from vairified import PARTNER_SEARCH_SORT_FIELDS
+
+   sort_by = raw if raw in PARTNER_SEARCH_SORT_FIELDS else None
+   async for m in client.members.search(sort_by=sort_by):
+       ...
+
+A value outside the list is still sent, as in the TypeScript SDK, and the API's
+400 surfaces as :class:`vairified.ValidationError`.
+
+An unset ``sort_order`` now means ascending
+-------------------------------------------
+
+``sort_order`` defaulted to ``"desc"``, so every search was sent with
+``sortDirection=desc``. It now defaults to ``None`` and is sent only when set,
+which gives the API's default order, ascending by last name. This matches the
+TypeScript SDK. To keep the old order:
+
+.. code-block:: python
+
+   client.members.search(city="Austin", sort_order="desc")
+
+``sort_order`` and ``SearchFilters.sort_direction`` are also typed
+``Literal["asc", "desc"]``.
+
+Behaviour to expect from the API
+--------------------------------
+
+Nothing to change in code, but don't rely on the old behaviour:
+
+- **Verified-track splits** (``overall-*``, ``gender-*``, ``mixed-*``,
+  ``singles-*``) are absent for a player not verified in that sport. The
+  primary rating falls back to the recreational chain (``R`` / ``Rv``). Use
+  ``key in sport_rating`` before you index.
+- **On the leaderboard**, ``list()`` and ``categories()`` now check the API
+  key the SDK sends. An invalid key raises ``AuthenticationError``, a key
+  without ``leaderboard:read`` raises ``PermissionDeniedError``.
+- **Deprecated leaderboard options** ``club_id`` (on ``list`` and ``rank``) and
+  ``city`` (on ``rank``) are no longer sent and raise a ``DeprecationWarning``.
+  Remove them.
+- **Rating splits** were already immutable in Python (frozen pydantic models),
+  so the TypeScript SDK's frozen-split change has no Python counterpart.

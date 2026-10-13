@@ -79,6 +79,23 @@ class AuthenticationError(VairifiedError):
         super().__init__(message, status_code=401, **kwargs)
 
 
+class PermissionDeniedError(VairifiedError):
+    """
+    Raised on HTTP 403 -- the API key is valid but not allowed to do this.
+
+    It lacks the scope the route needs (e.g. ``leaderboard:read``), the player
+    has not connected to your app, or the key's IP allow-list refuses the caller.
+    """
+
+    def __init__(self, message: str = "Permission denied", **kwargs):
+        """
+        Initialize permission denied error.
+
+        :param message: Error message.
+        """
+        super().__init__(message, status_code=403, **kwargs)
+
+
 class NotFoundError(VairifiedError):
     """
     Raised when a resource is not found.
