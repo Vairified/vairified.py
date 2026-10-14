@@ -13,30 +13,32 @@ Mirrors the Partner API v1 rating-tracks release. No field is removed or renamed
 changes can affect existing code: `sort_by` / `SearchFilters.sort_field` are narrowed to a
 `Literal` (type checkers only, there is no runtime check), `sort_order` is narrowed to
 `"asc"` / `"desc"`, and an unset `sort_order` now gives ascending order instead of descending.
-See the [migration guide](docs/migrating.rst).
+Two API behaviour changes need a look too: the recreational chain is `R` for every player
+(`Rv` is gone), and the leaderboard's `verified_only` no longer means "unverified only" when it
+is unset or `False`. See the [migration guide](docs/migrating.rst).
 
 ### Added
 
 - **`label` on every rating split and on each sport** -- `RatingSplit.label` and
   `SportRating.label` (`str | None`): the label the VAIRified web app shows, bracket suffix
-  included (`VO`, `VS12-13`, `RO`, `Rv`, `RG40+`). `None` for tracks the web app does not show
-  (provisional, asymmetric), and when talking to an older API. Use it for display; `abbr` keeps
-  the legacy partner codes (`S` for verified singles, `R` / `Rv` for the recreational chain). Also
-  on the webhook's `RatingUpdatedSport`.
-- **Label lookup** -- `sport_rating.by_label("VS")` and `member.split_by_label("RG40+", sport=...)`,
+  included. The labels are `VO`, `VG`, `VM`, `VS` (verified tracks), `R` (the recreational
+  doubles chain) and `RS` (recreational singles), e.g. `VS12-13`, `RS40+`. `None` for tracks the
+  web app does not show (provisional, asymmetric), and when talking to an older API. Use it for
+  display; `abbr` keeps the legacy partner code `S` for verified singles. Also on the webhook's
+  `RatingUpdatedSport`.
+- **Label lookup** -- `sport_rating.by_label("VS")` and `member.split_by_label("RS40+", sport=...)`,
   alongside `get()` / `split()`.
-- **The recreational track splits** `recreational_gender-*`, `recreational_mixed-*`,
-  `recreational_singles-*` (abbr `RG` / `RM` / `RS` plus the bracket suffix) appear in
-  `rating_splits`. They never become a sport's primary rating.
-- **Eight leaderboard tracks** -- the `LeaderboardCategory` enum (`OVERALL`, `GENDER`, `SINGLES`,
-  `MIXED`, `RECREATIONAL`, `RECREATIONAL_GENDER`, `RECREATIONAL_MIXED`, `RECREATIONAL_SINGLES`).
-  `category` on `leaderboard.list()` / `rank()` also accepts the labels in
-  `LEADERBOARD_CATEGORY_LABELS` (`VO VG VM VS S RO Rv R RG RM RS`, any case), typed as
-  `LeaderboardCategoryLabel`. Plain strings keep working. `list(LeaderboardCategory)` gives
-  the eight codes in API order, the equivalent of the TypeScript SDK's
-  `LEADERBOARD_CATEGORIES`.
-- **`leaderboard.category_list()`** -- the tracks from `GET /leaderboard/categories` as frozen
-  `LeaderboardCategoryInfo` models (`code`, `name`, `label`, `verified_only`, `verified_label`).
+- **The recreational singles split** `recreational_singles-*` (abbr `RS` plus the bracket
+  suffix) appears in `rating_splits`. It never becomes a sport's primary rating. (The engine's
+  recreational same-gender and mixed tracks are internal; the API never sends them.)
+- **Six leaderboard tracks** -- the `LeaderboardCategory` enum (`OVERALL`, `GENDER`, `SINGLES`,
+  `MIXED`, `RECREATIONAL`, `RECREATIONAL_SINGLES`). `category` on `leaderboard.list()` /
+  `rank()` also accepts the labels in `LEADERBOARD_CATEGORY_LABELS` (`VO VG VM VS R RS`, any
+  case), typed as `LeaderboardCategoryLabel`. Plain strings keep working, and the API still
+  resolves the legacy labels `S`, `RO` and `Rv`. `list(LeaderboardCategory)` gives the six
+  codes in API order, the equivalent of the TypeScript SDK's `LEADERBOARD_CATEGORIES`.
+- **`leaderboard.category_list()`** -- the six tracks from `GET /leaderboard/categories` as
+  frozen `LeaderboardCategoryInfo` models (`code`, `name`, `label`, `verified_only`).
   `categories()` still returns the raw dict.
 - **`PermissionDeniedError`** (HTTP 403), a `VairifiedError` subclass. A 403 used to arrive as a
   plain `VairifiedError` with `status_code == 403`; existing `except VairifiedError` blocks keep
@@ -51,21 +53,34 @@ See the [migration guide](docs/migrating.rst).
   This applies to `members.get()`, `get_bulk()`, `get_by_email()` and `search()`. The splits
   `overall-*`, `gender-*`, `mixed-*`, `singles-*` and `asymmetric-*` are missing from
   `rating_splits`. The sport's primary `rating` / `abbr` falls back to the recreational chain
-  (`recreational-open`, abbr `R` / `Rv`). A sport with nothing visible is missing from
+  (`recreational-open`, abbr `R`). A sport with nothing visible is missing from
   `member.sport`, so `rating_for()` returns `None` for it. *For integrators:* do not assume
   `overall-open` exists. Check `key in sport_rating` or `sport_rating.is_vairified` first.
 - **`members.rating_updates()`** follows the same rule. `new_rating`, `sport` and `changed_at`
   come from the newest rating a partner may see.
 - **`rating.updated` webhook** follows the same rule. No event is sent when only withheld ratings
-  change. A change confined to `RG` / `RM` / `RS` now sends one. The snapshot carries the new
-  `label` and recreational-track keys; `verify_webhook()` already passes unknown keys through, so
-  no receiver change is needed.
+  change. A change confined to `RS` now sends one. The snapshot carries the new `label` and the
+  `recreational_singles-*` keys; `verify_webhook()` already passes unknown keys through, so no
+  receiver change is needed.
 - **Event members** (`GET /partner/event/{eventId}/members`, which this SDK does not wrap):
   `rating` is the verified overall-open value, otherwise recreational-open, otherwise absent.
-- **`is_vairified` ignores every recreational track.** `RG` / `RM` / `RS` ratings never make a
-  player VAIRified in a sport. No existing player changes.
+- **The recreational chain's `abbr` is `R` for every player.** It used to be `Rv` for a player
+  verified in the sport; `Rv` (and the label `RO`) is no longer sent anywhere: not by
+  `members.*`, not by `rating_updates()`, not in `rating.updated`. *For integrators:* code that
+  matched `abbr == "Rv"` to spot a verified player never matches now. Use
+  `sport_rating.is_vairified`.
+- **`is_vairified` means a verified `VO` / `VG` / `VM` / `VS` rating in the sport.** Recreational
+  ratings (`R`, `RS`) never make a player VAIRified. No existing player changes.
 - **Leaderboard:** verified boards (`overall`, `gender`, `mixed`, `singles`) list only players
-  verified in the sport, for API keys too. Rank and percentile are scoped to the sport.
+  verified in the sport, for API keys too. The recreational boards (`R`, `RS`) rank every player.
+  Rank and percentile are scoped to the sport.
+- **Leaderboard: `verified_only` is an optional narrowing filter.** `True` lists only VAIRified
+  players; unset or `False` applies no filter. Before, the API read an unset or `False` value as
+  "unverified players only", so a call that left it out got an empty verified board and half of
+  the recreational one. `verified_only` on `leaderboard.list()` now defaults to `None` (was
+  `False`) and is sent only when you set it, so an explicit `False` goes out instead of being
+  dropped. *For integrators:* if you relied on the old default to list unverified players, that
+  filter no longer exists.
 - **Leaderboard: the key the SDK sends is now checked on the public routes.** On
   `leaderboard.list()`, `categories()` and `category_list()`, an invalid or revoked key raises
   `AuthenticationError` (401). A key without `leaderboard:read` raises `PermissionDeniedError`
@@ -103,6 +118,10 @@ See the [migration guide](docs/migrating.rst).
   `sort_order="desc"` to keep the old order.
 - **`leaderboard.list(club_id=...)` failed with a 400**, for the same reason. `club_id` is no
   longer sent (see Deprecated).
+- **Wheelchair ratings no longer overwrite standard splits** (API fix). A wheelchair rating
+  shares its standard split's key (`{category}-{bracket}`), so for a player with both it could
+  replace the standard value. Wheelchair rows are no longer sent to partners, and the standard
+  splits always carry the standard rating. No SDK change.
 
 ## [0.8.0] - 2026-09-24
 

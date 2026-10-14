@@ -28,11 +28,12 @@ class LeaderboardCategory(StrEnum):
     A leaderboard ``category`` code, in the order the API lists them.
 
     The first four are **verified** tracks -- their boards list only players
-    verified in the sport. The last four are **recreational** tracks. Members
-    are plain strings, so either the member or its value can be passed::
+    verified in the sport. The last two are **recreational** tracks -- their
+    boards rank every player, verified in the sport or not. Members are plain
+    strings, so either the member or its value can be passed::
 
-        await client.leaderboard.list(category=LeaderboardCategory.RECREATIONAL_GENDER)
-        await client.leaderboard.list(category="recreational_gender")
+        await client.leaderboard.list(category=LeaderboardCategory.RECREATIONAL_SINGLES)
+        await client.leaderboard.list(category="recreational_singles")
     """
 
     OVERALL = "overall"
@@ -44,36 +45,26 @@ class LeaderboardCategory(StrEnum):
     MIXED = "mixed"
     """Verified mixed doubles (VM)."""
     RECREATIONAL = "recreational"
-    """The recreational chain (RO, or Rv for a player verified in the sport)."""
-    RECREATIONAL_GENDER = "recreational_gender"
-    """Recreational same-gender doubles (RG)."""
-    RECREATIONAL_MIXED = "recreational_mixed"
-    """Recreational mixed doubles (RM)."""
+    """The recreational doubles chain (R, for every player)."""
     RECREATIONAL_SINGLES = "recreational_singles"
     """Recreational singles (RS)."""
 
 
-LeaderboardCategoryLabel = Literal[
-    "VO", "VG", "VM", "VS", "S", "RO", "Rv", "R", "RG", "RM", "RS"
-]
-"""A label the API maps to a :class:`LeaderboardCategory`, case-insensitively.
-``S`` (verified singles) and ``R`` / ``Rv`` (the recreational chain) are the
-legacy partner abbreviations and keep resolving."""
+LeaderboardCategoryLabel = Literal["VO", "VG", "VM", "VS", "R", "RS"]
+"""A label the API maps to a :class:`LeaderboardCategory`, case-insensitively --
+the labels the web app shows, one per track. The API still resolves the legacy
+``S`` (verified singles) and ``RO`` / ``Rv`` (the recreational chain, now
+``R``); they are left out here so new code uses the current labels."""
 
 LEADERBOARD_CATEGORY_LABELS: tuple[LeaderboardCategoryLabel, ...] = (
     "VO",
     "VG",
     "VM",
     "VS",
-    "S",
-    "RO",
-    "Rv",
     "R",
-    "RG",
-    "RM",
     "RS",
 )
-"""Every label the API accepts in place of a category code."""
+"""Every track label the API accepts in place of a category code."""
 
 
 class LeaderboardCategoryInfo(BaseModel):
@@ -91,13 +82,11 @@ class LeaderboardCategoryInfo(BaseModel):
     name: str
     """Display name (``"Doubles"``, ``"Singles"``, ``"Recreational"``, ...)."""
     label: str
-    """The label the web app shows for this track (``"VO"``, ``"RO"``, ``"RG"``)."""
+    """The label every surface shows for this track (``"VO"``, ``"VS"``, ``"R"``,
+    ``"RS"``)."""
     verified_only: bool = Field(alias="verifiedOnly")
     """``True`` for the verified tracks: their board lists only players verified
-    in the sport."""
-    verified_label: str | None = Field(default=None, alias="verifiedLabel")
-    """The recreational chain's label for a player verified in the sport
-    (``"Rv"``); ``None`` on every other track."""
+    in the sport. ``False`` for ``R`` / ``RS``, whose boards rank every player."""
 
     def __repr__(self) -> str:  # pragma: no cover - REPL affordance
         return f"<LeaderboardCategoryInfo {self.code} ({self.label})>"

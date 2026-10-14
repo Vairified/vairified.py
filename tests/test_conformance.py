@@ -109,7 +109,7 @@ class TestRatingTracksCase:
     case and asserts what the TypeScript twin asserts about its contents, so the
     two SDKs agree on what a partner receives, not just on accepting it."""
 
-    def test_label_rg_split_and_no_overall_open(self):
+    def test_r_label_rs_split_and_no_overall_open(self):
         case = next(c for c in _CASES if c["name"] == "accept/ru-rating-tracks")
         event = verify_webhook(
             bytes.fromhex(case["bodyHex"]),
@@ -120,13 +120,14 @@ class TestRatingTracksCase:
         assert is_rating_updated_event(event)
 
         pb = RatingUpdatedSport.model_validate(event.data.sports["pickleball"])
-        assert pb.label == "RO"
+        assert pb.label == "R"
         assert pb.abbr == "R"
         assert pb.is_vairified is False
-        assert pb.rating_splits["recreational_gender-open"] == {
+        assert pb.rating_splits["recreational_singles-open"] == {
             "rating": 3.52,
-            "abbr": "RG",
-            "label": "RG",
+            "abbr": "RS",
+            "label": "RS",
         }
-        assert pb.rating_splits["recreational-open"]["label"] == "RO"
+        assert pb.rating_splits["recreational-open"]["label"] == "R"
+        assert "recreational_gender-open" not in pb.rating_splits
         assert "overall-open" not in pb.rating_splits

@@ -124,7 +124,7 @@ sports you requested via the ``sport=`` query filter.
 
 Verified-track splits (``overall-*``, ``gender-*``, ``mixed-*``, ``singles-*``)
 are sent only for a player verified in that sport. For anyone else they are
-absent and the primary rating is the recreational chain (``R`` / ``Rv``); a
+absent and the primary rating is the recreational chain (``R``); a
 sport with nothing visible is left out of ``member.sport`` entirely.
 
 ``SportRating`` is dict-like
@@ -149,7 +149,7 @@ without reaching into ``.rating_splits`` directly:
        print(key, split.rating, split.abbr, split.label)
 
    pb.by_label("VS")                 # the singles-open split, by web label
-   pb["recreational_gender-open"]    # recreational tracks: RG / RM / RS
+   pb["recreational_singles-open"]   # recreational tracks: R / RS
 
 Filtering ratings by sport
 ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -538,7 +538,6 @@ Read-only leaderboard queries live on ``client.leaderboard``:
        category="singles",
        scope="state",
        state="TX",
-       verified_only=True,
        limit=50,
    )
 
@@ -553,11 +552,15 @@ Read-only leaderboard queries live on ``client.leaderboard``:
    )
    print(f"#{rank['rank']} (top {rank['percentile']:.1f}%)")
 
-   # Recreational same-gender doubles -- a code, an enum member, or a label
-   rg = await client.leaderboard.list(category=LeaderboardCategory.RECREATIONAL_GENDER)
-   rg = await client.leaderboard.list(category="RG")
+   # Recreational singles -- a code, an enum member, or a label
+   rs = await client.leaderboard.list(category=LeaderboardCategory.RECREATIONAL_SINGLES)
+   rs = await client.leaderboard.list(category="RS")
 
-   # The eight tracks as typed models
+   # The recreational board ranks everyone; verified_only=True narrows it to
+   # VAIRified players. Unset (or False) applies no filter.
+   rec_verified = await client.leaderboard.list(category="R", verified_only=True)
+
+   # The six tracks as typed models
    for track in await client.leaderboard.category_list():
        print(track.code, track.label, track.verified_only)
 
@@ -565,7 +568,10 @@ Read-only leaderboard queries live on ``client.leaderboard``:
    categories = await client.leaderboard.categories()
 
 Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
-players verified in the sport; rank and percentile are scoped to the sport. The
+players verified in the sport; the recreational boards (``R``, ``RS``) rank
+every player. ``verified_only`` is sent only when you set it: ``True`` lists
+only VAIRified players, unset or ``False`` applies no filter. Rank and
+percentile are scoped to the sport. The
 routes are public, but the key the SDK sends is checked: invalid or revoked
 raises ``AuthenticationError``, missing ``leaderboard:read`` raises
 ``PermissionDeniedError``.

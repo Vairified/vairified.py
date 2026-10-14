@@ -1,7 +1,8 @@
 """The rating-tracks release of Partner API v1.
 
-Web labels on every split and sport, the recreational_gender / _mixed / _singles
-splits, withheld verified-track splits, the eight leaderboard tracks, and the
+Web labels on every split and sport, ``R`` for the recreational chain whoever
+the player is, the recreational_singles split, withheld verified-track splits,
+the six leaderboard tracks, the optional verifiedOnly filter, and the
 leaderboard's 401 / 403 on a bad key. Mirrors ``tests/rating-tracks.test.ts``.
 """
 
@@ -55,7 +56,7 @@ class Payloads:
 
     @classmethod
     def verified_player(cls) -> dict[str, Any]:
-        """A player verified in pickleball: verified plus recreational tracks."""
+        """A player verified in pickleball: verified plus recreational (R, RS)."""
         return cls.member(
             {
                 "pickleball": {
@@ -71,23 +72,18 @@ class Payloads:
                         },
                         "recreational-open": {
                             "rating": 3.8,
-                            "abbr": "Rv",
-                            "label": "Rv",
-                        },
-                        "recreational_gender-open": {
-                            "rating": 3.52,
-                            "abbr": "RG",
-                            "label": "RG",
-                        },
-                        "recreational_mixed-40+": {
-                            "rating": 3.71,
-                            "abbr": "RM40+",
-                            "label": "RM40+",
+                            "abbr": "R",
+                            "label": "R",
                         },
                         "recreational_singles-open": {
                             "rating": 3.6,
                             "abbr": "RS",
                             "label": "RS",
+                        },
+                        "recreational_singles-40+": {
+                            "rating": 3.71,
+                            "abbr": "RS40+",
+                            "label": "RS40+",
                         },
                         "asymmetric-open": {"rating": 3.9, "abbr": "VA", "label": None},
                     },
@@ -107,17 +103,17 @@ class Payloads:
                 "pickleball": {
                     "rating": 3.42,
                     "abbr": "R",
-                    "label": "RO",
+                    "label": "R",
                     "ratingSplits": {
                         "recreational-open": {
                             "rating": 3.42,
                             "abbr": "R",
-                            "label": "RO",
+                            "label": "R",
                         },
-                        "recreational_mixed-open": {
+                        "recreational_singles-open": {
                             "rating": 3.3,
-                            "abbr": "RM",
-                            "label": "RM",
+                            "abbr": "RS",
+                            "label": "RS",
                         },
                     },
                     "isVairified": False,
@@ -172,20 +168,7 @@ class Payloads:
                 {
                     "code": "recreational",
                     "name": "Recreational",
-                    "label": "RO",
-                    "verifiedOnly": False,
-                    "verifiedLabel": "Rv",
-                },
-                {
-                    "code": "recreational_gender",
-                    "name": "Recreational Gender",
-                    "label": "RG",
-                    "verifiedOnly": False,
-                },
-                {
-                    "code": "recreational_mixed",
-                    "name": "Recreational Mixed",
-                    "label": "RM",
+                    "label": "R",
                     "verifiedOnly": False,
                 },
                 {
@@ -209,24 +192,34 @@ class TestSplitLabels:
         assert (split.rating, split.abbr, split.label) == (4.03, "S12-13", "VS12-13")
         assert pb["asymmetric-open"].label is None
 
-    def test_recreational_track_keys(self):
+    def test_recreational_singles_keys(self):
         pb = Member.model_validate(Payloads.verified_player()).sport["pickleball"]
-        assert pb["recreational_gender-open"].abbr == "RG"
-        assert pb["recreational_mixed-40+"].label == "RM40+"
-        assert pb["recreational_singles-open"].rating == 3.6
-        assert len(pb) == 7
+        rs = pb["recreational_singles-open"]
+        assert (rs.abbr, rs.label) == ("RS", "RS")
+        assert pb["recreational_singles-40+"].label == "RS40+"
+        assert "recreational_gender-open" not in pb
+        assert "recreational_mixed-open" not in pb
+        assert len(pb) == 6
+
+    def test_recreational_chain_is_r_for_a_verified_player(self):
+        pb = Member.model_validate(Payloads.verified_player()).sport["pickleball"]
+        assert pb.is_vairified is True
+        split = pb["recreational-open"]
+        assert (split.rating, split.abbr, split.label) == (3.8, "R", "R")
+        assert pb.by_label("R").rating == 3.8
+        assert pb.by_label("Rv") is None
 
     def test_lookup_by_label(self):
         member = Member.model_validate(Payloads.verified_player())
         pb = member.sport["pickleball"]
         # ``abbr`` keeps the legacy ``S``; the label is what the web app shows.
         assert pb.by_label("VS12-13").abbr == "S12-13"
-        assert pb.by_label("RM40+").rating == 3.71
+        assert pb.by_label("RS40+").rating == 3.71
         assert pb.by_label("XX") is None
         # Exact match, as the API sends it.
-        assert pb.by_label("rv") is None
-        assert member.split_by_label("RG").rating == 3.52
-        assert member.split_by_label("RG", sport="padel") is None
+        assert pb.by_label("rs") is None
+        assert member.split_by_label("RS").rating == 3.6
+        assert member.split_by_label("RS", sport="padel") is None
 
     def test_label_defaults_to_none_on_an_older_api(self):
         pb = Member.model_validate(Payloads.legacy_player()).sport["pickleball"]
@@ -252,7 +245,7 @@ class TestSplitLabels:
         assert member.split("overall-open") is None
         # The primary is the recreational chain now, and rating_for() follows it.
         assert member.rating_for("pickleball") == 3.42
-        assert (pb.abbr, pb.label, pb.is_vairified) == ("R", "RO", False)
+        assert (pb.abbr, pb.label, pb.is_vairified) == ("R", "R", False)
 
     @respx.mock
     async def test_sport_with_nothing_visible_is_absent(self, api_key, base_url):
@@ -282,10 +275,10 @@ class TestRatingUpdatesLabels:
                             "newRating": 3.52,
                             "changedAt": "2026-10-13T10:00:00.000Z",
                             "ratingSplits": {
-                                "recreational_gender-open": {
+                                "recreational_singles-open": {
                                     "rating": 3.52,
-                                    "abbr": "RG",
-                                    "label": "RG",
+                                    "abbr": "RS",
+                                    "label": "RS",
                                 },
                                 "recreational-open": {"rating": 3.4, "abbr": "R"},
                             },
@@ -297,44 +290,32 @@ class TestRatingUpdatesLabels:
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             [update] = await client.members.rating_updates()
 
-        assert update.rating_splits["recreational_gender-open"].label == "RG"
+        assert update.rating_splits["recreational_singles-open"].label == "RS"
         assert update.rating_splits["recreational-open"].label is None
 
 
 class TestLeaderboardTracks:
-    def test_exposes_the_eight_codes_and_the_labels(self):
+    def test_exposes_the_six_codes_and_their_labels(self):
         assert [c.value for c in LeaderboardCategory] == [
             "overall",
             "gender",
             "singles",
             "mixed",
             "recreational",
-            "recreational_gender",
-            "recreational_mixed",
             "recreational_singles",
         ]
-        assert LEADERBOARD_CATEGORY_LABELS == (
-            "VO",
-            "VG",
-            "VM",
-            "VS",
-            "S",
-            "RO",
-            "Rv",
-            "R",
-            "RG",
-            "RM",
-            "RS",
-        )
+        assert LEADERBOARD_CATEGORY_LABELS == ("VO", "VG", "VM", "VS", "R", "RS")
 
+    # ``Rv`` is a legacy label the API still resolves; the SDK forwards it untouched.
     @pytest.mark.parametrize(
         ("category", "sent"),
         [
-            ("recreational_gender", "recreational_gender"),
-            ("recreational_mixed", "recreational_mixed"),
+            ("recreational", "recreational"),
             ("recreational_singles", "recreational_singles"),
             (LeaderboardCategory.RECREATIONAL_SINGLES, "recreational_singles"),
-            ("RG", "RG"),
+            ("R", "R"),
+            ("RS", "RS"),
+            ("Rv", "Rv"),
             ("vs", "vs"),
         ],
     )
@@ -366,11 +347,11 @@ class TestLeaderboardTracks:
         )
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             await client.leaderboard.rank(
-                "vair_mem_42", category=LeaderboardCategory.RECREATIONAL_GENDER
+                "vair_mem_42", category=LeaderboardCategory.RECREATIONAL_SINGLES
             )
 
         body = json.loads(route.calls.last.request.content)
-        assert body["category"] == "recreational_gender"
+        assert body["category"] == "recreational_singles"
 
     @respx.mock
     async def test_unknown_category_is_a_validation_error(self, api_key, base_url):
@@ -396,8 +377,9 @@ class TestLeaderboardTracks:
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             tracks = await client.leaderboard.category_list()
 
-        assert len(tracks) == 8
+        assert len(tracks) == 6
         assert [t.code for t in tracks] == [c.value for c in LeaderboardCategory]
+        assert [t.label for t in tracks] == ["VO", "VG", "VS", "VM", "R", "RS"]
         assert all(isinstance(t, LeaderboardCategoryInfo) for t in tracks)
         singles = tracks[2]
         assert (singles.code, singles.label, singles.verified_only) == (
@@ -405,9 +387,13 @@ class TestLeaderboardTracks:
             "VS",
             True,
         )
-        assert singles.verified_label is None
         rec = tracks[4]
-        assert (rec.label, rec.verified_label, rec.verified_only) == ("RO", "Rv", False)
+        assert rec.model_dump(by_alias=True) == {
+            "code": "recreational",
+            "name": "Recreational",
+            "label": "R",
+            "verifiedOnly": False,
+        }
         with pytest.raises(PydanticValidationError):
             rec.label = "XX"
 
@@ -418,6 +404,47 @@ class TestLeaderboardTracks:
         )
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             assert await client.leaderboard.category_list() == []
+
+
+class TestLeaderboardVerifiedOnly:
+    """``verified_only`` is an optional filter, sent only when set."""
+
+    @staticmethod
+    def _sent(route: respx.Route) -> list[str | None]:
+        return [call.request.url.params.get("verifiedOnly") for call in route.calls]
+
+    @respx.mock
+    async def test_not_sent_when_unset_so_r_and_rs_rank_everyone(
+        self, api_key, base_url
+    ):
+        route = respx.get(f"{base_url}/leaderboard").mock(
+            return_value=Response(200, json={"players": []})
+        )
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.leaderboard.list(category="R")
+            await client.leaderboard.list(category="recreational_singles")
+
+        assert self._sent(route) == [None, None]
+
+    @respx.mock
+    async def test_sent_true_to_narrow_to_vairified_players(self, api_key, base_url):
+        route = respx.get(f"{base_url}/leaderboard").mock(
+            return_value=Response(200, json={"players": []})
+        )
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.leaderboard.list(category="R", verified_only=True)
+
+        assert self._sent(route) == ["true"]
+
+    @respx.mock
+    async def test_sent_false_when_the_caller_sets_it(self, api_key, base_url):
+        route = respx.get(f"{base_url}/leaderboard").mock(
+            return_value=Response(200, json={"players": []})
+        )
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.leaderboard.list(category="VO", verified_only=False)
+
+        assert self._sent(route) == ["false"]
 
 
 class TestLeaderboardKeyChecks:
@@ -495,17 +522,17 @@ class TestRatingUpdatedWebhookTracks:
                         "pickleball": {
                             "rating": 3.42,
                             "abbr": "R",
-                            "label": "RO",
+                            "label": "R",
                             "ratingSplits": {
                                 "recreational-open": {
                                     "rating": 3.42,
                                     "abbr": "R",
-                                    "label": "RO",
+                                    "label": "R",
                                 },
-                                "recreational_gender-open": {
+                                "recreational_singles-open": {
                                     "rating": 3.52,
-                                    "abbr": "RG",
-                                    "label": "RG",
+                                    "abbr": "RS",
+                                    "label": "RS",
                                 },
                                 "recreational_singles-40+": {
                                     "rating": 3.3,
@@ -532,10 +559,10 @@ class TestRatingUpdatedWebhookTracks:
         )
         assert is_rating_updated_event(event)
         raw = event.data.sports["pickleball"]
-        assert raw["ratingSplits"]["recreational_gender-open"]["label"] == "RG"
+        assert raw["ratingSplits"]["recreational_singles-open"]["label"] == "RS"
         assert "overall-open" not in raw["ratingSplits"]
 
         pb = RatingUpdatedSport.model_validate(raw)
-        assert pb.label == "RO"
+        assert pb.label == "R"
         assert pb.rating_splits["recreational_singles-40+"]["abbr"] == "RS40+"
         assert pb.model_extra == {"someFutureSportKey": "kept"}

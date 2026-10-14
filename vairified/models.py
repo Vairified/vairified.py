@@ -78,17 +78,16 @@ class RatingSplit(BaseModel):
 
     rating: float
     abbr: str
-    """Partner abbreviation, legacy codes kept (``VO``, ``S12-13``, ``Rv``)."""
+    """Partner abbreviation, legacy codes kept (``VO``, ``S12-13``, ``R``)."""
     label: str | None = None
     """The label the VAIRified web app shows for this split, bracket suffix included
-    -- ``VO``, ``VG``, ``VM``, ``VS`` (verified tracks), ``RO`` / ``Rv`` (the
-    recreational chain, ``Rv`` for a player verified in the sport), ``RG``, ``RM``,
-    ``RS`` (recreational tracks), e.g. ``VS12-13``. ``None`` for the tracks the web
-    app does not show (provisional, asymmetric), and when an older API omits it.
+    -- ``VO``, ``VG``, ``VM``, ``VS`` (verified tracks), ``R`` (the recreational
+    doubles chain, for every player) and ``RS`` (recreational singles), e.g.
+    ``VS12-13``. ``None`` for the tracks the web app does not show (provisional,
+    asymmetric), and when an older API omits it.
 
     Use this, not :attr:`abbr`, when you display a label: ``abbr`` keeps the
-    legacy partner codes (``S`` for verified singles, ``R`` / ``Rv`` for the
-    recreational chain)."""
+    legacy partner code ``S`` for verified singles."""
 
     def __repr__(self) -> str:  # pragma: no cover - REPL affordance
         return f"<RatingSplit {self.rating:.3f} {self.abbr}>"
@@ -100,7 +99,7 @@ class SportRating(BaseModel):
 
     The top-level ``rating`` / ``abbr`` is the primary rating for that
     sport: the verified overall-open rating (``VO``) for a player verified in
-    the sport, otherwise the recreational chain (``R`` / ``Rv``). Every
+    the sport, otherwise the recreational chain (``R``). Every
     category × age bracket the API sends is also available under
     :attr:`rating_splits`, keyed by ``{category}-{bracketCode}``, and by web
     label through :meth:`by_label`.
@@ -127,7 +126,7 @@ class SportRating(BaseModel):
     rating: float
     abbr: str
     label: str | None = None
-    """The web app's label for the primary rating (``VO``, ``RO``, ``Rv``), or
+    """The web app's label for the primary rating (``VO``, ``R``), or
     ``None`` when the API sent none. See :attr:`RatingSplit.label`."""
     rating_splits: dict[str, RatingSplit] = Field(
         default_factory=dict, alias="ratingSplits"
@@ -137,7 +136,8 @@ class SportRating(BaseModel):
     # sport-scoped, so these live on each sport rather than the member status.
     # Defaulted so the SDK stays compatible with API responses that predate #783.
     is_vairified: bool = Field(default=False, alias="isVairified")
-    """Player is VAIRified in this sport (has a verified, non-recreational rating)."""
+    """Player is VAIRified in this sport: has a verified VO / VG / VM / VS
+    rating there."""
     is_rater: bool = Field(default=False, alias="isRater")
     """Active VAIR Pro (can rate) in this sport. Alias of :attr:`is_vair_pro`."""
     is_vair_pro: bool = Field(default=False, alias="isVairPro")
@@ -170,7 +170,7 @@ class SportRating(BaseModel):
     def by_label(self, label: str) -> RatingSplit | None:
         """
         Look up a rating split by the label the web app shows, bracket suffix
-        included (e.g. ``"VS"``, ``"VO40+"``, ``"RG12-13"``, ``"Rv"``).
+        included (e.g. ``"VS"``, ``"VO40+"``, ``"RS12-13"``, ``"R"``).
 
         Matches :attr:`RatingSplit.label` exactly, as the API sends it.
         Returns ``None`` when no split carries that label.
@@ -345,7 +345,7 @@ class Member(BaseModel):
         Get a rating split for a sport by the label the web app shows.
 
         :param label: Web label, bracket suffix included, e.g. ``"VS"`` or
-            ``"RG40+"``. See :meth:`SportRating.by_label`.
+            ``"RS40+"``. See :meth:`SportRating.by_label`.
         :param sport: Sport code, defaults to ``"pickleball"``.
         """
         sport_rating = self.sport.get(sport)

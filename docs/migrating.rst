@@ -257,7 +257,10 @@ Reads ``VAIRIFIED_ENV`` from the environment when not supplied.
 Migrating from 0.8.x to 0.9.0
 =============================
 
-0.9.0 removes and renames nothing. Three changes can affect existing code.
+0.9.0 removes and renames nothing in the SDK. Three SDK changes can affect
+existing code (the first sections below), and two API behaviour changes need a
+look even though code runs unchanged: ``Rv`` is now ``R``, and the leaderboard's
+``verified_only`` default.
 
 ``sort_by`` only accepts the sortable fields
 --------------------------------------------
@@ -295,6 +298,59 @@ TypeScript SDK. To keep the old order:
 ``sort_order`` and ``SearchFilters.sort_direction`` are also typed
 ``Literal["asc", "desc"]``.
 
+``Rv`` is now ``R``
+-------------------
+
+The recreational doubles chain is ``R`` for every player, in ``abbr`` and
+``label`` alike. A player verified in the sport used to get ``Rv`` (and the
+label ``RO``); neither is sent any more. The labels the API sends are ``VO``,
+``VG``, ``VM``, ``VS``, ``R`` and ``RS`` (plus a bracket suffix such as
+``RS40+``).
+
+.. code-block:: python
+
+   # Before -- inferred "verified" from the recreational abbreviation
+   verified = pb.abbr == "Rv"     # never True now
+   # After -- the per-sport flag (a verified VO / VG / VM / VS rating there)
+   verified = pb.is_vairified
+
+Also replace ``by_label("Rv")`` / ``by_label("RO")`` with ``by_label("R")``. As
+a leaderboard ``category``, ``"Rv"`` and ``"RO"`` still resolve to
+``recreational``, but ``LEADERBOARD_CATEGORY_LABELS`` lists ``"R"`` only.
+
+Leaderboard ``verified_only`` no longer defaults to "unverified only"
+---------------------------------------------------------------------
+
+``verified_only`` on ``leaderboard.list()`` is an optional narrowing filter. Its
+default is now ``None`` (was ``False``), and it is sent only when you set it.
+
+==================  =========================  ========================
+``verified_only``   Before 0.9.0               Now
+==================  =========================  ========================
+unset / ``None``    unverified players only    no filter -- everyone
+``False``           unverified players only    no filter -- everyone
+``True``            verified players only      VAIRified players only
+==================  =========================  ========================
+
+Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
+verified players whatever it says; the recreational boards (``R``, ``RS``) rank
+everyone unless you pass ``True``. There is no longer a way to list *only*
+unverified players; if you relied on that, filter the page yourself.
+
+.. code-block:: python
+
+   await client.leaderboard.list(category="R")                      # everyone
+   await client.leaderboard.list(category="R", verified_only=True)  # VAIRified only
+
+Six leaderboard tracks
+----------------------
+
+``LeaderboardCategory`` (new) is ``OVERALL``, ``GENDER``, ``SINGLES``,
+``MIXED``, ``RECREATIONAL``, ``RECREATIONAL_SINGLES``. The engine's recreational
+same-gender and mixed tracks are internal: the API refuses them as a
+``category`` (``ValidationError``) and never sends their splits, so don't look
+for ``recreational_gender-*`` / ``recreational_mixed-*`` keys.
+
 Behaviour to expect from the API
 --------------------------------
 
@@ -302,7 +358,7 @@ Nothing to change in code, but don't rely on the old behaviour:
 
 - **Verified-track splits** (``overall-*``, ``gender-*``, ``mixed-*``,
   ``singles-*``) are absent for a player not verified in that sport. The
-  primary rating falls back to the recreational chain (``R`` / ``Rv``). Use
+  primary rating falls back to the recreational chain (``R``). Use
   ``key in sport_rating`` before you index.
 - **On the leaderboard**, ``list()`` and ``categories()`` now check the API
   key the SDK sends. An invalid key raises ``AuthenticationError``, a key

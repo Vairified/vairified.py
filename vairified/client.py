@@ -804,9 +804,10 @@ class LeaderboardResource(_Resource):
     Read-only leaderboard queries.
 
     Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
-    players verified in the sport, and rank / percentile are scoped to the sport.
-    ``category`` takes a :class:`LeaderboardCategory` code or one of its labels
-    (``"VS"``, ``"RG"``, any case).
+    players verified in the sport; the recreational boards (``recreational`` /
+    R, ``recreational_singles`` / RS) rank every player. Rank and percentile are
+    scoped to the sport. ``category`` takes a :class:`LeaderboardCategory` code
+    or one of its labels (``"VS"``, ``"R"``, any case).
 
     :meth:`list` and :meth:`categories` / :meth:`category_list` are public
     routes, but the SDK always sends your key, and a key that is sent is
@@ -837,7 +838,7 @@ class LeaderboardResource(_Resource):
         city: str | None = None,
         club_id: str | None = None,
         gender: str | None = None,
-        verified_only: bool = False,
+        verified_only: bool | None = None,
         min_games: int | None = None,
         limit: int = 50,
         offset: int = 0,
@@ -851,6 +852,12 @@ class LeaderboardResource(_Resource):
 
         :param sport_code: Sport code (``"pickleball"``, ``"padel"``), sent as
             ``sportCode``. Rank and percentile are per sport.
+        :param verified_only: Optional narrowing filter, sent as
+            ``verifiedOnly`` only when set. ``True`` lists only players
+            VAIRified in the sport; ``False`` or ``None`` applies no filter.
+            (Before 0.9.0 the API read an unset or ``False`` value as
+            "unverified players only".) Verified boards list only verified
+            players whatever this says.
         :param club_id: **Deprecated.** The API has no club filter here;
             accepted for compatibility, never sent, and raises a
             :class:`DeprecationWarning`.
@@ -871,8 +878,10 @@ class LeaderboardResource(_Resource):
         ):
             if value is not None:
                 params[key] = value
-        if verified_only:
-            params["verifiedOnly"] = True
+        # Sent only when the caller sets it: True narrows to VAIRified players,
+        # False or absent is no filter.
+        if verified_only is not None:
+            params["verifiedOnly"] = verified_only
         data = await self._client._request("GET", "/leaderboard", params=params)
         return data or {}
 

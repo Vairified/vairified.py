@@ -127,11 +127,10 @@ class RatingUpdatedSport(BaseModel):
     rating: float | None = None
     abbr: str | None = None
     label: str | None = None
-    """The web app's label for the primary rating (``VO``, ``RO``, ``Rv``, ...)."""
+    """The web app's label for the primary rating (``VO``, ``R``, ...)."""
     rating_splits: dict[str, Any] | None = Field(default=None, alias="ratingSplits")
     """Split key -> ``{"rating", "abbr", "label"}``, unvalidated. Since the
-    rating-tracks release this includes ``recreational_gender-*``,
-    ``recreational_mixed-*`` and ``recreational_singles-*`` keys, and the
+    rating-tracks release this includes ``recreational_singles-*`` keys, and the
     verified-track keys are absent for a player not verified in the sport."""
     is_vairified: bool | None = Field(default=None, alias="isVairified")
     is_rater: bool | None = Field(default=None, alias="isRater")

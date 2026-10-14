@@ -80,14 +80,14 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     print(pb["overall-open"].rating)         # 3.915
     print("singles-open" in pb)              # True
     print(pb.by_label("VS").abbr)            # "S" -- look up by web label
-    print(pb["recreational_gender-open"].label)  # "RG"
+    print(pb["recreational-open"].label)     # "R" -- for every player
     for key, split in pb:
         print(key, split.rating, split.label)
 ```
 
 Verified-track splits (`overall-*`, `gender-*`, `mixed-*`, `singles-*`) are sent
 only for a player verified in that sport. For anyone else they are absent, and
-the primary `rating` / `abbr` is the recreational chain (`R` / `Rv`). Check
+the primary `rating` / `abbr` is the recreational chain (`R`). Check
 `key in pb` rather than assuming a key exists.
 
 ### Filter ratings to specific sports
@@ -472,7 +472,6 @@ async with Vairified(api_key="vair_pk_xxx") as client:
         category=LeaderboardCategory.SINGLES,  # or "singles", or the label "VS"
         scope="state",
         state="TX",
-        verified_only=True,
         limit=50,
     )
 
@@ -485,10 +484,12 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     )
     print(f"#{rank['rank']} (top {rank['percentile']:.1f}%)")
 
-    # Recreational same-gender doubles, by label
-    rg = await client.leaderboard.list(category="RG")
+    # The recreational board (label "R") ranks everyone; verified_only narrows
+    # it to VAIRified players. Leave verified_only unset for no filter.
+    rec = await client.leaderboard.list(category="R")
+    rec_verified = await client.leaderboard.list(category="R", verified_only=True)
 
-    # The eight tracks as typed models
+    # The six tracks as typed models
     for track in await client.leaderboard.category_list():
         print(track.code, track.label, track.verified_only)
 
@@ -496,12 +497,14 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     categories = await client.leaderboard.categories()
 ```
 
-`list(LeaderboardCategory)` gives the eight codes in API order, the Python
+`list(LeaderboardCategory)` gives the six codes in API order, the Python
 equivalent of the TypeScript SDK's `LEADERBOARD_CATEGORIES`.
 
 Tracks: `overall` (VO), `gender` (VG), `singles` (VS), `mixed` (VM) are verified
-boards; `recreational` (RO / Rv), `recreational_gender` (RG), `recreational_mixed`
-(RM), `recreational_singles` (RS) are recreational. Rank and percentile are scoped
+boards and list only players verified in the sport; `recreational` (R) and
+`recreational_singles` (RS) are recreational boards and rank every player.
+`verified_only` is an optional filter, sent only when you set it: `True` lists only
+VAIRified players, unset or `False` applies no filter. Rank and percentile are scoped
 to the sport. The leaderboard routes are public, but the key the SDK sends is
 checked: an invalid or revoked key raises `AuthenticationError`, a key without
 `leaderboard:read` raises `PermissionDeniedError`.
@@ -544,10 +547,10 @@ member.split_by_label("VS")          # RatingSplit | None, by web label
 pb = member.sport["pickleball"]
 pb.rating                     # Primary rating for this sport
 pb.abbr                       # "VO", "R", etc. (legacy partner codes)
-pb.label                      # "VO", "RO", "Rv" -- the web app's label, or None
+pb.label                      # "VO", "R" -- the web app's label, or None
 pb["overall-open"].rating     # Any split key
-pb["overall-open"].label      # Every split has a label too ("VS12-13", "RG")
-pb.by_label("RG")             # RatingSplit | None, by web label
+pb["overall-open"].label      # Every split has a label too ("VS12-13", "RS")
+pb.by_label("RS")             # RatingSplit | None, by web label
 len(pb)                       # Number of splits
 "singles-40+" in pb           # Membership check
 for key, split in pb: ...     # Iterate (yields (key, RatingSplit) tuples)
