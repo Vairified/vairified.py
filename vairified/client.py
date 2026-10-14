@@ -979,8 +979,8 @@ class EventsResource(_Resource):
         rejected, because a listing with half a coordinate cannot be placed and
         would never appear in a radius search.
 
-        Requires the ``key:event:submit`` scope, granted per partner, and an API
-        key linked to your partner application.
+        Requires the ``key:event:submit`` scope, which Vairified adds to a
+        specific key on request, and an API key linked to your partner application.
 
         :param partner_event_id: YOUR identifier for this event.
         :param sport_code: The sport, by its Vairified code — e.g. ``"pickleball"``,
