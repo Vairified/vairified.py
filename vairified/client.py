@@ -57,6 +57,8 @@ from vairified.errors import (
     NotFoundError,
     PermissionDeniedError,
     RateLimitError,
+    ScoreEntryPausedError,
+    ServiceUnavailableError,
     VairifiedError,
     ValidationError,
 )
@@ -263,12 +265,37 @@ def _raise_from_response(response: httpx.Response) -> None:
     if status == 404:
         raise NotFoundError(message, response=body)
     if status == 429:
-        retry_after_hdr = response.headers.get("Retry-After")
-        retry_after = int(retry_after_hdr) if retry_after_hdr else None
+        retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
         raise RateLimitError(message, retry_after=retry_after, response=body)
     if status == 400:
         raise ValidationError(message, response=body)
+    if status == 503:
+        # The header wins; the body's ``retryAfter`` covers a proxy that strips it.
+        body_dict = body if isinstance(body, dict) else {}
+        retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
+        if retry_after is None:
+            retry_after = _parse_retry_after_seconds(body_dict.get("retryAfter"))
+        codes = (body_dict.get("code"), body_dict.get("error"))
+        if ScoreEntryPausedError.code in codes:
+            raise ScoreEntryPausedError(message, retry_after=retry_after, response=body)
+        raise ServiceUnavailableError(message, retry_after=retry_after, response=body)
     raise VairifiedError(message, status_code=status, response=body)
+
+
+def _parse_retry_after_seconds(value: object) -> int | None:
+    """
+    Read a ``Retry-After`` value as whole seconds.
+
+    Only the delta-seconds form is understood (what the API sends); an HTTP
+    date, a negative or a garbage value yields ``None`` rather than a wait the
+    caller cannot trust.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text.isascii() or not text.isdigit():
+        return None
+    return int(text)
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +655,10 @@ class MatchesResource(_Resource):
 
         Set ``batch.dry_run = True`` to validate without persisting.
 
+        :raises ScoreEntryPausedError: (HTTP 503) while Vairified has paused
+            score entry for maintenance. Nothing was saved; resubmit after
+            ``err.retry_after`` seconds. The SDK does not retry for you.
+
         Example::
 
             batch = MatchBatch(
@@ -671,6 +702,9 @@ class MatchesResource(_Resource):
             ``teamA``, ``teamB``).
         :returns: :class:`TournamentImportResult` with counts.
         :raises ValidationError: If the payload is malformed.
+        :raises ScoreEntryPausedError: (HTTP 503) while score entry is paused
+            for maintenance. Nothing was imported; resubmit after
+            ``err.retry_after`` seconds.
 
         Example::
 

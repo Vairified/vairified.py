@@ -63,6 +63,66 @@ class RateLimitError(VairifiedError):
         self.retry_after = retry_after
 
 
+class ServiceUnavailableError(VairifiedError):
+    """
+    Raised on HTTP 503 -- the API is temporarily refusing this request.
+
+    The SDK never retries on its own. A 503 is safe to retry later, but wait at
+    least :attr:`retry_after` seconds first: retrying in a tight loop only adds
+    load to a service that has said it is not taking the request.
+
+    :ivar retry_after: Seconds to wait before retrying, from the ``Retry-After``
+        header (or the body's ``retryAfter`` when the header is missing), or
+        ``None`` if the server didn't say.
+    """
+
+    def __init__(
+        self,
+        message: str = "Service unavailable",
+        retry_after: Optional[int] = None,
+        **kwargs,
+    ):
+        """
+        Initialize service unavailable error.
+
+        :param message: Error message.
+        :param retry_after: Seconds to wait before retrying.
+        """
+        super().__init__(message, status_code=503, **kwargs)
+        self.retry_after = retry_after
+
+
+class ScoreEntryPausedError(ServiceUnavailableError):
+    """
+    Raised on HTTP 503 with code ``SCORE_ENTRY_PAUSED``.
+
+    Vairified has paused score entry for a rating maintenance window. Only writes
+    that create or re-rate matches are refused (``matches.submit()``,
+    ``matches.tournament_import()``); reads keep working.
+
+    Nothing was saved. Resubmit the same payload after :attr:`retry_after`
+    seconds (the API currently asks for 300). The SDK does not retry for you.
+
+    :ivar code: Always ``"SCORE_ENTRY_PAUSED"``.
+    """
+
+    code = "SCORE_ENTRY_PAUSED"
+
+    def __init__(
+        self,
+        message: str = "Score entry is paused for maintenance",
+        retry_after: Optional[int] = None,
+        **kwargs,
+    ):
+        """
+        Initialize score entry paused error.
+
+        :param message: Error message.
+        :param retry_after: Seconds to wait before resubmitting.
+        """
+        super().__init__(message, retry_after=retry_after, **kwargs)
+
+
 class AuthenticationError(VairifiedError):
     """
     Raised when authentication fails.

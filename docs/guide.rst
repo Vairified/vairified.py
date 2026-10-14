@@ -636,17 +636,27 @@ Error Handling
 
 The SDK maps HTTP status codes to typed exceptions:
 
-========  ===========================  ================================
+========  ===========================  ==========================================
 Status    Exception                    Meaning
-========  ===========================  ================================
+========  ===========================  ==========================================
 400       ``ValidationError``          Bad request, invalid input
 401       ``AuthenticationError``      Invalid or missing API key
 403       ``PermissionDeniedError``    Missing scope / not connected
 404       ``NotFoundError``            Resource not found
 429       ``RateLimitError``           Rate limit exceeded
+503       ``ScoreEntryPausedError``    Score entry paused for maintenance
+                                       (code ``SCORE_ENTRY_PAUSED``)
+503       ``ServiceUnavailableError``  Temporarily unavailable (any other 503)
 5xx       ``VairifiedError``           Server error (generic)
 —         ``OAuthError``               OAuth-specific failure
-========  ===========================  ================================
+========  ===========================  ==========================================
+
+``ScoreEntryPausedError`` subclasses ``ServiceUnavailableError``; both carry
+``retry_after`` (seconds, or ``None``). ``matches.submit()`` and
+``matches.tournament_import()`` raise it during a rating maintenance window;
+reads keep working. Nothing was saved, so resubmit the same payload after
+``retry_after`` seconds. The SDK never retries on its own: if you retry a 429
+or a 503, wait at least ``retry_after`` seconds and cap the attempts.
 
 All typed exceptions inherit from :class:`~vairified.errors.VairifiedError`,
 so a single ``except VairifiedError`` catches everything.

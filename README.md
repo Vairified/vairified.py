@@ -634,6 +634,29 @@ async with Vairified() as client:   # reads both env vars
 
 ## Error Handling
 
+The SDK maps HTTP status codes to typed exceptions. All typed exceptions inherit from
+`VairifiedError`, so a single `except VairifiedError` catches everything.
+
+| Status | Exception | Means |
+|---|---|---|
+| 400 | `ValidationError` | Bad request, invalid input |
+| 401 | `AuthenticationError` | Invalid or missing API key |
+| 403 | `PermissionDeniedError` | Missing scope, or the player has not connected |
+| 404 | `NotFoundError` | Resource not found |
+| 429 | `RateLimitError` | Rate limit exceeded; `retry_after` seconds |
+| 503 + code `SCORE_ENTRY_PAUSED` | `ScoreEntryPausedError` | Score entry is paused for maintenance; `retry_after` seconds |
+| 503 | `ServiceUnavailableError` | Temporarily unavailable; `retry_after` seconds when the server says |
+| other | `VairifiedError` | Any other failure; check `status_code` |
+| — | `OAuthError` | OAuth-specific failure; `error_code` |
+
+`ScoreEntryPausedError` subclasses `ServiceUnavailableError`. During a rating maintenance
+window Vairified pauses score entry: `matches.submit()` and `matches.tournament_import()` raise
+it, while reads keep working. Nothing was saved, so resubmit the same payload later.
+
+**The SDK never retries a request on its own**, for any status. If you retry a 429 or a 503,
+wait at least `e.retry_after` seconds (the score-entry pause asks for 300) and cap the number of
+attempts; retrying in a tight loop only adds load to a service that has said no.
+
 ```python
 from vairified import (
     Vairified,
@@ -644,6 +667,8 @@ from vairified import (
     NotFoundError,
     ValidationError,
     OAuthError,
+    ScoreEntryPausedError,
+    ServiceUnavailableError,
 )
 
 async with Vairified(api_key="vair_pk_xxx") as client:
@@ -661,6 +686,10 @@ async with Vairified(api_key="vair_pk_xxx") as client:
         print(f"Bad request: {e.message}")
     except OAuthError as e:
         print(f"OAuth error: {e.message} (code: {e.error_code})")
+    except ScoreEntryPausedError as e:
+        print(f"Score entry paused; resubmit in {e.retry_after or 300}s")
+    except ServiceUnavailableError as e:
+        print(f"Service unavailable; retry after {e.retry_after}s")
     except VairifiedError as e:
         print(f"API error: {e.message} (status: {e.status_code})")
 ```

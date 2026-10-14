@@ -43,6 +43,16 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
 - **`PermissionDeniedError`** (HTTP 403), a `VairifiedError` subclass. A 403 used to arrive as a
   plain `VairifiedError` with `status_code == 403`; existing `except VairifiedError` blocks keep
   working.
+- **`ScoreEntryPausedError`** (HTTP 503, `code == "SCORE_ENTRY_PAUSED"`), with `retry_after` in
+  seconds. While Vairified pauses score entry for a rating maintenance window,
+  `matches.submit()` and `matches.tournament_import()` raise it; reads are unaffected. Nothing
+  was saved: resubmit the same payload after `retry_after` seconds (the API asks for 300).
+  `retry_after` comes from the `Retry-After` header, or the body's `retryAfter` when the header
+  is missing.
+- **`ServiceUnavailableError`** (HTTP 503), the parent of `ScoreEntryPausedError`, with
+  `retry_after` when the server sends one. A 503 used to arrive as a plain `VairifiedError` with
+  `status_code == 503`; existing `except VairifiedError` blocks keep working. The SDK still never
+  retries on its own; if you retry, wait at least `retry_after` seconds and cap the attempts.
 - **`PARTNER_SEARCH_SORT_FIELDS`** and the `PartnerSearchSortField` literal type.
 - **`sport_code` on `leaderboard.list()` and `rank()`**, sent as `sportCode`. Rank and percentile
   are now per sport, so pass it for any player who plays more than one sport.

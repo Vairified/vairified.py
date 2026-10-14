@@ -55,6 +55,8 @@ from vairified.errors import (
     OAuthError,
     PermissionDeniedError,
     RateLimitError,
+    ScoreEntryPausedError,
+    ServiceUnavailableError,
     VairifiedError,
     ValidationError,
 )
@@ -219,6 +221,8 @@ __all__ = [
     "OAuthError",
     "PermissionDeniedError",
     "RateLimitError",
+    "ScoreEntryPausedError",
+    "ServiceUnavailableError",
     "ValidationError",
     "VairifiedError",
 ]
