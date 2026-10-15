@@ -80,14 +80,14 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     print(pb["overall-open"].rating)         # 3.915
     print("singles-open" in pb)              # True
     print(pb.by_label("VS").abbr)            # "VS" -- look up by web label
-    print(pb["recreational-open"].label)     # "R" -- for every player
+    print(pb["recreational-open"].label)     # "RO" -- for every player
     for key, split in pb:
         print(key, split.rating, split.label)
 ```
 
 Verified-track splits (`overall-*`, `gender-*`, `mixed-*`, `singles-*`) are sent
 only for a player verified in that sport. For anyone else they are absent, and
-the primary `rating` / `abbr` is the recreational chain (`R`). Check
+the primary `rating` / `abbr` is the recreational chain (`RO`). Check
 `key in pb` rather than assuming a key exists.
 
 ### Filter ratings to specific sports
@@ -484,14 +484,15 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     )
     print(f"#{rank['rank']} (top {rank['percentile']:.1f}%)")
 
-    # The recreational board (label "R") ranks everyone; verified_only narrows
+    # The recreational board (label "RO") ranks everyone; verified_only narrows
     # it to VAIRified players. Leave verified_only unset for no filter.
-    rec = await client.leaderboard.list(category="R")
-    rec_verified = await client.leaderboard.list(category="R", verified_only=True)
+    rec = await client.leaderboard.list(category="RO")
+    rec_verified = await client.leaderboard.list(category="RO", verified_only=True)
 
     # The six tracks as typed models
     for track in await client.leaderboard.category_list():
-        print(track.code, track.label, track.verified_only)
+        print(track.code, track.label, track.name, track.verified_only)
+        # recreational RO Recreational Overall False
 
     # Raw categories, brackets, scopes, rating tiers
     categories = await client.leaderboard.categories()
@@ -501,7 +502,7 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 equivalent of the TypeScript SDK's `LEADERBOARD_CATEGORIES`.
 
 Tracks: `overall` (VO), `gender` (VG), `singles` (VS), `mixed` (VM) are verified
-boards and list only players verified in the sport; `recreational` (R) and
+boards and list only players verified in the sport; `recreational` (RO) and
 `recreational_singles` (RS) are recreational boards and rank every player.
 `verified_only` is an optional filter, sent only when you set it: `True` lists only
 VAIRified players, unset or `False` applies no filter. Rank and percentile are scoped
@@ -546,8 +547,8 @@ member.split_by_label("VS")          # RatingSplit | None, by web label
 ```python
 pb = member.sport["pickleball"]
 pb.rating                     # Primary rating for this sport
-pb.abbr                       # "VO", "R", etc. (legacy partner codes)
-pb.label                      # "VO", "R" -- the web app's label, or None
+pb.abbr                       # "VO", "RO", etc. (partner codes)
+pb.label                      # "VO", "RO" -- the web app's label, or None
 pb["overall-open"].rating     # Any split key
 pb["overall-open"].label      # Every split has a label too ("VS12-13", "RS")
 pb.by_label("RS")             # RatingSplit | None, by web label

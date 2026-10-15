@@ -839,9 +839,9 @@ class LeaderboardResource(_Resource):
 
     Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
     players verified in the sport; the recreational boards (``recreational`` /
-    R, ``recreational_singles`` / RS) rank every player. Rank and percentile are
+    RO, ``recreational_singles`` / RS) rank every player. Rank and percentile are
     scoped to the sport. ``category`` takes a :class:`LeaderboardCategory` code
-    or one of its labels (``"VS"``, ``"R"``, any case).
+    or one of its labels (``"VS"``, ``"RO"``, any case).
 
     :meth:`list` and :meth:`categories` / :meth:`category_list` are public
     routes, but the SDK always sends your key, and a key that is sent is

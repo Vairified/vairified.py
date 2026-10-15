@@ -45,23 +45,23 @@ class LeaderboardCategory(StrEnum):
     MIXED = "mixed"
     """Verified mixed doubles (VM)."""
     RECREATIONAL = "recreational"
-    """The recreational doubles chain (R, for every player)."""
+    """The recreational doubles chain (RO, "Recreational Overall", for every player)."""
     RECREATIONAL_SINGLES = "recreational_singles"
     """Recreational singles (RS)."""
 
 
-LeaderboardCategoryLabel = Literal["VO", "VG", "VM", "VS", "R", "RS"]
+LeaderboardCategoryLabel = Literal["VO", "VG", "VM", "VS", "RO", "RS"]
 """A label the API maps to a :class:`LeaderboardCategory`, case-insensitively --
 the labels the web app shows, one per track. The API still resolves the legacy
-``S`` (verified singles) and ``RO`` / ``Rv`` (the recreational chain, now
-``R``); they are left out here so new code uses the current labels."""
+``S`` (verified singles) and ``R`` / ``Rv`` (the recreational chain, now
+``RO``); they are left out here so new code uses the current labels."""
 
 LEADERBOARD_CATEGORY_LABELS: tuple[LeaderboardCategoryLabel, ...] = (
     "VO",
     "VG",
     "VM",
     "VS",
-    "R",
+    "RO",
     "RS",
 )
 """Every track label the API accepts in place of a category code."""
@@ -80,13 +80,15 @@ class LeaderboardCategoryInfo(BaseModel):
     rather than :class:`LeaderboardCategory`, so a track the API adds later
     parses."""
     name: str
-    """Display name (``"Doubles"``, ``"Singles"``, ``"Recreational"``, ...)."""
+    """The track's full name: ``"Vairified Overall"``, ``"Vairified Gender"``,
+    ``"Vairified Mixed"``, ``"Vairified Singles"``, ``"Recreational Overall"``,
+    ``"Recreational Singles"``."""
     label: str
-    """The label every surface shows for this track (``"VO"``, ``"VS"``, ``"R"``,
+    """The label every surface shows for this track (``"VO"``, ``"VS"``, ``"RO"``,
     ``"RS"``)."""
     verified_only: bool = Field(alias="verifiedOnly")
     """``True`` for the verified tracks: their board lists only players verified
-    in the sport. ``False`` for ``R`` / ``RS``, whose boards rank every player."""
+    in the sport. ``False`` for ``RO`` / ``RS``, whose boards rank every player."""
 
     def __repr__(self) -> str:  # pragma: no cover - REPL affordance
         return f"<LeaderboardCategoryInfo {self.code} ({self.label})>"

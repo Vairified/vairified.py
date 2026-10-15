@@ -13,16 +13,17 @@ Mirrors the Partner API v1 rating-tracks release. No field is removed or renamed
 changes can affect existing code: `sort_by` / `SearchFilters.sort_field` are narrowed to a
 `Literal` (type checkers only, there is no runtime check), `sort_order` is narrowed to
 `"asc"` / `"desc"`, and an unset `sort_order` now gives ascending order instead of descending.
-Three API behaviour changes need a look too: verified singles' `abbr` is `VS` (it was `S`), the
-recreational chain is `R` for every player (`Rv` is gone), and the leaderboard's `verified_only` no longer means "unverified only" when it
-is unset or `False`. See the [migration guide](docs/migrating.rst).
+Four API behaviour changes need a look too: verified singles' `abbr` is `VS` (it was `S`), the
+recreational chain is `RO` for every player (it was `R`, or `Rv` for a verified player), the
+leaderboard's `verified_only` no longer means "unverified only" when it is unset or `False`, and
+leaderboard category `name`s are the full track names. See the [migration guide](docs/migrating.rst).
 
 ### Added
 
 - **`label` on every rating split and on each sport** -- `RatingSplit.label` and
   `SportRating.label` (`str | None`): the label the VAIRified web app shows, bracket suffix
-  included. The labels are `VO`, `VG`, `VM`, `VS` (verified tracks), `R` (the recreational
-  doubles chain) and `RS` (recreational singles), e.g. `VS12-13`, `RS40+`. Typed `str | None` only
+  included. The labels are `VO`, `VG`, `VM`, `VS` (verified tracks), `RO` (the recreational
+  doubles chain, "Recreational Overall") and `RS` (recreational singles), e.g. `VS12-13`, `RS40+`. Typed `str | None` only
   so an older API, which does not send it, still parses. Use it for display. Also on the webhook's
   `RatingUpdatedSport`.
 - **Label lookup** -- `sport_rating.by_label("VS")` and `member.split_by_label("RS40+", sport=...)`,
@@ -32,13 +33,15 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   recreational same-gender and mixed tracks are internal; the API never sends them.)
 - **Six leaderboard tracks** -- the `LeaderboardCategory` enum (`OVERALL`, `GENDER`, `SINGLES`,
   `MIXED`, `RECREATIONAL`, `RECREATIONAL_SINGLES`). `category` on `leaderboard.list()` /
-  `rank()` also accepts the labels in `LEADERBOARD_CATEGORY_LABELS` (`VO VG VM VS R RS`, any
+  `rank()` also accepts the labels in `LEADERBOARD_CATEGORY_LABELS` (`VO VG VM VS RO RS`, any
   case), typed as `LeaderboardCategoryLabel`. Plain strings keep working, and the API still
-  resolves the legacy labels `S`, `RO` and `Rv`. `list(LeaderboardCategory)` gives the six
+  resolves the legacy labels `S`, `R` and `Rv`. `list(LeaderboardCategory)` gives the six
   codes in API order, the equivalent of the TypeScript SDK's `LEADERBOARD_CATEGORIES`.
 - **`leaderboard.category_list()`** -- the six tracks from `GET /leaderboard/categories` as
-  frozen `LeaderboardCategoryInfo` models (`code`, `name`, `label`, `verified_only`).
-  `categories()` still returns the raw dict.
+  frozen `LeaderboardCategoryInfo` models (`code`, `name`, `label`, `verified_only`). `name` is
+  the track's full name: `Vairified Overall`, `Vairified Gender`, `Vairified Mixed`, `Vairified
+  Singles`, `Recreational Overall`, `Recreational Singles`. `categories()` still returns the raw
+  dict.
 - **`PermissionDeniedError`** (HTTP 403), a `VairifiedError` subclass. A 403 used to arrive as a
   plain `VairifiedError` with `status_code == 403`; existing `except VairifiedError` blocks keep
   working.
@@ -62,7 +65,7 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   This applies to `members.get()`, `get_bulk()`, `get_by_email()` and `search()`. The splits
   `overall-*`, `gender-*`, `mixed-*`, `singles-*` and `asymmetric-*` are missing from
   `rating_splits`. The sport's primary `rating` / `abbr` falls back to the recreational chain
-  (`recreational-open`, abbr `R`). A sport with nothing visible is missing from
+  (`recreational-open`, abbr `RO`). A sport with nothing visible is missing from
   `member.sport`, so `rating_for()` returns `None` for it. *For integrators:* do not assume
   `overall-open` exists. Check `key in sport_rating` or `sport_rating.is_vairified` first.
 - **`members.rating_updates()`** follows the same rule. `new_rating`, `sport` and `changed_at`
@@ -80,15 +83,22 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   release refresh. `abbr` now equals `label` for every verified track. *For integrators:* if you
   match on `S`, match on `VS` (see the migration guide). As a leaderboard `category`, `"S"` still
   resolves to `singles`.
-- **The recreational chain's `abbr` is `R` for every player.** It used to be `Rv` for a player
-  verified in the sport; `Rv` (and the label `RO`) is no longer sent anywhere: not by
-  `members.*`, not by `rating_updates()`, not in `rating.updated`. *For integrators:* code that
-  matched `abbr == "Rv"` to spot a verified player never matches now. Use
+- **The recreational chain's `abbr` is `RO` ("Recreational Overall") for every player -- a
+  behaviour change of an existing field.** It used to be `R` for a player not verified in the
+  sport and `Rv` for one verified there; neither is sent any more: not by `members.*`, not by
+  `rating_updates()`, not in `rating.updated`. The bracket suffix is unchanged (`R50+` is now
+  `RO50+`). *For integrators:* code that matches `abbr == "R"` or `"Rv"` never matches now:
+  match `RO`, use the split key (`recreational-open`), or, to spot a verified player,
   `sport_rating.is_vairified`.
+- **Leaderboard categories carry full track names.** `GET /leaderboard/categories`
+  (`categories()` / `category_list()`) now names the tracks `Vairified Overall`, `Vairified
+  Gender`, `Vairified Singles`, `Vairified Mixed`, `Recreational Overall`, `Recreational Singles`
+  (they were `Doubles`, `Same-Gender Doubles`, `Singles`, `Mixed Doubles`, `Recreational`,
+  `Recreational Singles`). Match on `code`, never on `name`.
 - **`is_vairified` means a verified `VO` / `VG` / `VM` / `VS` rating in the sport.** Recreational
-  ratings (`R`, `RS`) never make a player VAIRified. No existing player changes.
+  ratings (`RO`, `RS`) never make a player VAIRified. No existing player changes.
 - **Leaderboard:** verified boards (`overall`, `gender`, `mixed`, `singles`) list only players
-  verified in the sport, for API keys too. The recreational boards (`R`, `RS`) rank every player.
+  verified in the sport, for API keys too. The recreational boards (`RO`, `RS`) rank every player.
   Rank and percentile are scoped to the sport.
 - **Leaderboard: `verified_only` is an optional narrowing filter.** `True` lists only VAIRified
   players; unset or `False` applies no filter. Before, the API read an unset or `False` value as
@@ -105,7 +115,7 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   (`asymmetric-*`) splits** -- in member lookups, `rating_updates()`, `rating.updated` webhooks and
   the release refresh. Earlier 0.9.0 builds received them with `label: None`. A sport whose only
   ratings were on those tracks no longer appears. `label` is always one of `VO`, `VG`, `VM`, `VS`,
-  `R`, `RS` (plus the age-bracket suffix); it stays typed `str | None` so older APIs still parse.
+  `RO`, `RS` (plus the age-bracket suffix); it stays typed `str | None` so older APIs still parse.
 - **`members.search()` sorting is limited to `lastName`, `firstName`, `memberId`, `city`, `state`
   and `country`.** The default is `lastName` ascending. `sort_by` and
   `SearchFilters.sort_field` are now typed `PartnerSearchSortField`, a `Literal`. This applies to
