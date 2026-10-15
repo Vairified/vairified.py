@@ -22,9 +22,8 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
 - **`label` on every rating split and on each sport** -- `RatingSplit.label` and
   `SportRating.label` (`str | None`): the label the VAIRified web app shows, bracket suffix
   included. The labels are `VO`, `VG`, `VM`, `VS` (verified tracks), `R` (the recreational
-  doubles chain) and `RS` (recreational singles), e.g. `VS12-13`, `RS40+`. `None` for tracks the
-  web app does not show (provisional, asymmetric), and when talking to an older API. Use it for
-  display; `abbr` keeps the legacy partner code `S` for verified singles. Also on the webhook's
+  doubles chain) and `RS` (recreational singles), e.g. `VS12-13`, `RS40+`. Typed `str | None` only
+  so an older API, which does not send it, still parses. Use it for display; `abbr` keeps the legacy partner code `S` for verified singles. Also on the webhook's
   `RatingUpdatedSport`.
 - **Label lookup** -- `sport_rating.by_label("VS")` and `member.split_by_label("RS40+", sport=...)`,
   alongside `get()` / `split()`.
@@ -95,6 +94,11 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   `leaderboard.list()`, `categories()` and `category_list()`, an invalid or revoked key raises
   `AuthenticationError` (401). A key without `leaderboard:read` raises `PermissionDeniedError`
   (403). Before, these routes ignored the key.
+- **Rating splits: `rating_splits` never contains provisional (`provisional-*`) or asymmetric
+  (`asymmetric-*`) splits** -- in member lookups, `rating_updates()`, `rating.updated` webhooks and
+  the release refresh. Earlier 0.9.0 builds received them with `label: None`. A sport whose only
+  ratings were on those tracks no longer appears. `label` is always one of `VO`, `VG`, `VM`, `VS`,
+  `R`, `RS` (plus the age-bracket suffix); it stays typed `str | None` so older APIs still parse.
 - **`members.search()` sorting is limited to `lastName`, `firstName`, `memberId`, `city`, `state`
   and `country`.** The default is `lastName` ascending. `sort_by` and
   `SearchFilters.sort_field` are now typed `PartnerSearchSortField`, a `Literal`. This applies to

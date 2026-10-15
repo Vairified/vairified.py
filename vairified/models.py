@@ -83,8 +83,8 @@ class RatingSplit(BaseModel):
     """The label the VAIRified web app shows for this split, bracket suffix included
     -- ``VO``, ``VG``, ``VM``, ``VS`` (verified tracks), ``R`` (the recreational
     doubles chain, for every player) and ``RS`` (recreational singles), e.g.
-    ``VS12-13``. ``None`` for the tracks the web app does not show (provisional,
-    asymmetric), and when an older API omits it.
+    ``VS12-13``. The API never sends provisional or asymmetric splits; ``None``
+    only when an older API omits the label.
 
     Use this, not :attr:`abbr`, when you display a label: ``abbr`` keeps the
     legacy partner code ``S`` for verified singles."""
@@ -105,9 +105,10 @@ class SportRating(BaseModel):
     label through :meth:`by_label`.
 
     Verified-track splits (``overall-*``, ``gender-*``, ``mixed-*``,
-    ``singles-*``, ``asymmetric-*``) are present only for a player verified in
-    the sport -- the API leaves them out otherwise, so check membership rather
-    than assuming a key.
+    ``singles-*``) are present only for a player verified in the sport -- the
+    API leaves them out otherwise, so check membership rather than assuming a
+    key. Provisional (``provisional-*``) and asymmetric (``asymmetric-*``)
+    splits are never sent.
 
     This class is dict-like — you can access splits by subscript,
     iterate them, check membership, and get the length without touching
