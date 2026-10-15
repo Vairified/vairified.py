@@ -67,7 +67,7 @@ class Payloads:
                         "overall-open": {"rating": 3.915, "abbr": "VO", "label": "VO"},
                         "singles-12-13": {
                             "rating": 4.03,
-                            "abbr": "S12-13",
+                            "abbr": "VS12-13",
                             "label": "VS12-13",
                         },
                         "recreational-open": {
@@ -189,7 +189,7 @@ class TestSplitLabels:
         pb = Member.model_validate(Payloads.verified_player()).sport["pickleball"]
         assert pb.label == "VO"
         split = pb["singles-12-13"]
-        assert (split.rating, split.abbr, split.label) == (4.03, "S12-13", "VS12-13")
+        assert (split.rating, split.abbr, split.label) == (4.03, "VS12-13", "VS12-13")
         assert pb["asymmetric-open"].label is None
 
     def test_recreational_singles_keys(self):
@@ -212,8 +212,8 @@ class TestSplitLabels:
     def test_lookup_by_label(self):
         member = Member.model_validate(Payloads.verified_player())
         pb = member.sport["pickleball"]
-        # ``abbr`` keeps the legacy ``S``; the label is what the web app shows.
-        assert pb.by_label("VS12-13").abbr == "S12-13"
+        # Verified singles' ``abbr`` is ``VS``, like its label (``S`` before 0.9.0).
+        assert pb.by_label("VS12-13").abbr == "VS12-13"
         assert pb.by_label("RS40+").rating == 3.71
         assert pb.by_label("XX") is None
         # Exact match, as the API sends it.

@@ -78,7 +78,9 @@ class RatingSplit(BaseModel):
 
     rating: float
     abbr: str
-    """Partner abbreviation, legacy codes kept (``VO``, ``S12-13``, ``R``)."""
+    """Partner abbreviation (``VO``, ``VS12-13``, ``R``).
+
+    Verified singles was ``S`` before 0.9.0."""
     label: str | None = None
     """The label the VAIRified web app shows for this split, bracket suffix included
     -- ``VO``, ``VG``, ``VM``, ``VS`` (verified tracks), ``R`` (the recreational
@@ -86,8 +88,8 @@ class RatingSplit(BaseModel):
     ``VS12-13``. The API never sends provisional or asymmetric splits; ``None``
     only when an older API omits the label.
 
-    Use this, not :attr:`abbr`, when you display a label: ``abbr`` keeps the
-    legacy partner code ``S`` for verified singles."""
+    Use this when you display a label. Since 0.9.0 :attr:`abbr` matches it for the
+    verified tracks (verified singles' ``abbr`` is ``VS``; it was ``S``)."""
 
     def __repr__(self) -> str:  # pragma: no cover - REPL affordance
         return f"<RatingSplit {self.rating:.3f} {self.abbr}>"

@@ -13,8 +13,8 @@ Mirrors the Partner API v1 rating-tracks release. No field is removed or renamed
 changes can affect existing code: `sort_by` / `SearchFilters.sort_field` are narrowed to a
 `Literal` (type checkers only, there is no runtime check), `sort_order` is narrowed to
 `"asc"` / `"desc"`, and an unset `sort_order` now gives ascending order instead of descending.
-Two API behaviour changes need a look too: the recreational chain is `R` for every player
-(`Rv` is gone), and the leaderboard's `verified_only` no longer means "unverified only" when it
+Three API behaviour changes need a look too: verified singles' `abbr` is `VS` (it was `S`), the
+recreational chain is `R` for every player (`Rv` is gone), and the leaderboard's `verified_only` no longer means "unverified only" when it
 is unset or `False`. See the [migration guide](docs/migrating.rst).
 
 ### Added
@@ -23,7 +23,7 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   `SportRating.label` (`str | None`): the label the VAIRified web app shows, bracket suffix
   included. The labels are `VO`, `VG`, `VM`, `VS` (verified tracks), `R` (the recreational
   doubles chain) and `RS` (recreational singles), e.g. `VS12-13`, `RS40+`. Typed `str | None` only
-  so an older API, which does not send it, still parses. Use it for display; `abbr` keeps the legacy partner code `S` for verified singles. Also on the webhook's
+  so an older API, which does not send it, still parses. Use it for display. Also on the webhook's
   `RatingUpdatedSport`.
 - **Label lookup** -- `sport_rating.by_label("VS")` and `member.split_by_label("RS40+", sport=...)`,
   alongside `get()` / `split()`.
@@ -73,6 +73,13 @@ is unset or `False`. See the [migration guide](docs/migrating.rst).
   receiver change is needed.
 - **Event members** (`GET /partner/event/{eventId}/members`, which this SDK does not wrap):
   `rating` is the verified overall-open value, otherwise recreational-open, otherwise absent.
+- **Verified singles' `abbr` is `VS`, matching the web app** (it was `S`). The `singles-*`
+  split's `abbr`, and a sport's primary `abbr` when it is verified singles, are now `VS` plus the
+  bracket suffix (`VS`, `VS50+`, `VS12-13`) instead of `S` (`S`, `S50+`). Same field, same type;
+  only the value changes, in `members.*`, `rating_updates()`, `rating.updated` webhooks and the
+  release refresh. `abbr` now equals `label` for every verified track. *For integrators:* if you
+  match on `S`, match on `VS` (see the migration guide). As a leaderboard `category`, `"S"` still
+  resolves to `singles`.
 - **The recreational chain's `abbr` is `R` for every player.** It used to be `Rv` for a player
   verified in the sport; `Rv` (and the label `RO`) is no longer sent anywhere: not by
   `members.*`, not by `rating_updates()`, not in `rating.updated`. *For integrators:* code that

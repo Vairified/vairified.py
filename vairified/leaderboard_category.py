@@ -41,7 +41,7 @@ class LeaderboardCategory(StrEnum):
     GENDER = "gender"
     """Verified same-gender doubles (VG)."""
     SINGLES = "singles"
-    """Verified singles (VS; legacy partner abbreviation ``S``)."""
+    """Verified singles (VS)."""
     MIXED = "mixed"
     """Verified mixed doubles (VM)."""
     RECREATIONAL = "recreational"

@@ -258,9 +258,9 @@ Migrating from 0.8.x to 0.9.0
 =============================
 
 0.9.0 removes and renames nothing in the SDK. Three SDK changes can affect
-existing code (the first sections below), and two API behaviour changes need a
-look even though code runs unchanged: ``Rv`` is now ``R``, and the leaderboard's
-``verified_only`` default.
+existing code (the first sections below), and three API behaviour changes need a
+look even though code runs unchanged: ``S`` is now ``VS``, ``Rv`` is now ``R``,
+and the leaderboard's ``verified_only`` default.
 
 ``sort_by`` only accepts the sortable fields
 --------------------------------------------
@@ -297,6 +297,24 @@ TypeScript SDK. To keep the old order:
 
 ``sort_order`` and ``SearchFilters.sort_direction`` are also typed
 ``Literal["asc", "desc"]``.
+
+``S`` is now ``VS``
+-------------------
+
+Verified singles' ``abbr`` is ``VS``, the same code the web app shows (it was
+``S``). The bracket suffix is unchanged: ``S50+`` is now ``VS50+``, ``S12-13``
+is now ``VS12-13``. It applies to every split and to a sport's primary ``abbr``,
+in ``members.*``, ``rating_updates()`` and ``rating.updated``. If you match on
+``S``, match on ``VS``:
+
+.. code-block:: python
+
+   singles = split.abbr.startswith("S")    # never true now
+   singles = split.abbr.startswith("VS")   # verified singles, any bracket
+
+Better still, use the split key (``singles-open``, ``singles-50+``) or
+``label``, which never changed. As a leaderboard ``category``, ``"S"`` still
+resolves to ``singles``.
 
 ``Rv`` is now ``R``
 -------------------

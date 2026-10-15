@@ -79,7 +79,7 @@ async with Vairified(api_key="vair_pk_xxx") as client:
     print(pb.is_vairified)                   # True (per-sport, Vairified#783)
     print(pb["overall-open"].rating)         # 3.915
     print("singles-open" in pb)              # True
-    print(pb.by_label("VS").abbr)            # "S" -- look up by web label
+    print(pb.by_label("VS").abbr)            # "VS" -- look up by web label
     print(pb["recreational-open"].label)     # "R" -- for every player
     for key, split in pb:
         print(key, split.rating, split.label)
