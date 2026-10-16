@@ -38,6 +38,7 @@ Sub-resources:
 * :attr:`Vairified.matches` — submit batch, tournament_import
 * :attr:`Vairified.oauth` — OAuth authorization flow
 * :attr:`Vairified.leaderboard` — leaderboard queries
+* :attr:`Vairified.events` — event catalogue; submit/withdraw your own listings
 * :attr:`Vairified.webhooks` — webhook delivery inspection
 * :attr:`Vairified.usage` — API usage stats (method: ``await client.usage()``)
 """
@@ -58,6 +59,7 @@ from vairified.errors import (
     VairifiedError,
     ValidationError,
 )
+from vairified.events import EventsResource
 from vairified.models import (
     AttributionResult,
     MatchBatch,
@@ -159,6 +161,7 @@ class Vairified:
         self.matches = MatchesResource(self)
         self.oauth = OAuthResource(self)
         self.leaderboard = LeaderboardResource(self)
+        self.events = EventsResource(self)
         self.webhooks = WebhooksResource(self)
         self.referrals = ReferralsResource(self)
 
@@ -920,6 +923,7 @@ def _token_response_from(data: dict[str, Any]) -> TokenResponse:
 
 __all__ = [
     "ENVIRONMENTS",
+    "EventsResource",
     "LeaderboardResource",
     "MatchesResource",
     "MembersResource",

@@ -58,6 +58,7 @@ Every operation lives on a sub-resource that matches the REST path:
 | `client.matches`        | `submit`, `tournament_import`, `test_webhook`            |
 | `client.oauth`          | `authorize`, `exchange_token`, `refresh`, `revoke`      |
 | `client.leaderboard`    | `list`, `rank`, `categories`                            |
+| `client.events`         | `list`, `get`, `members`, `submit`, `withdraw`          |
 | `client.webhooks`       | `deliveries`                                            |
 | `client.usage()`        | Rate-limit + request-count stats                        |
 
@@ -389,6 +390,61 @@ Every refusal is a `WebhookSignatureError` with a `reason` you can branch on:
 | `malformed_body` | The body was not JSON, or a field a partner gates access on was missing or the wrong type. |
 
 The message never contains the secret or either digest.
+
+## Events
+
+Browse the event catalogue (needs `key:event:read`):
+
+```python
+from datetime import datetime, timezone
+
+page = await client.events.list(
+    type="TOURNAMENT",
+    date_from=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    lat=30.2849, lng=-97.7341, radius_miles=25,   # all three or none; at most 250
+)
+for event in page.events:
+    print(event.event_id, event.name, event.location)
+print(page.total, "in all")                       # page with limit= and offset=
+
+event = await client.events.get(12345)
+roster = await client.events.members(12345)
+```
+
+Dates must carry a time zone: pass an aware `datetime`, or a string with `Z` or an offset.
+A plain date is refused.
+
+### Listing your own events
+
+With `key:event:submit` you can put your own events in VAIR's events directory. Players see
+the listing and register on your site; nothing is paid on VAIR.
+
+```python
+from vairified import EventSubmission, EventSubmissionLocation
+
+result = await client.events.submit(EventSubmission(
+    partner_event_id="autumn-doubles-avon",      # YOUR id; re-send it to update
+    sport_code="pickleball",
+    name="Autumn Doubles",
+    type="TOURNAMENT",
+    registration_url="https://example.com/register/autumn-doubles",
+    start_date=datetime(2026, 11, 14, 14, tzinfo=timezone.utc),
+    max_spots=128,                                # 1 to 100,000
+    logo_url="https://example.com/logos/autumn.png",
+    location=EventSubmissionLocation(city="Avon", state="CO"),
+))
+print(result.event_id, "created" if result.created else "updated")
+
+# Reconcile: your own listings carry partner_event_id, removed and what you sent.
+mine = await client.events.list(mine=True)
+
+await client.events.withdraw("autumn-doubles-avon")   # re-submit to restore
+```
+
+**Leave a field out to keep its current value; set it to `None` to clear it.** Only the
+fields you set are sent, so an integration that does not know a newer field never erases it.
+A listing VAIR removed comes back from `list(mine=True)` with `removed=True`; re-submitting it
+is refused with a 403, so stop sending it.
 
 ## Webhook Deliveries
 

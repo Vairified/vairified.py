@@ -19,6 +19,19 @@ Models
    :undoc-members:
    :show-inheritance:
 
+Events
+------
+
+.. automodule:: vairified.events
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: vairified.event_models
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 OAuth
 -----
 

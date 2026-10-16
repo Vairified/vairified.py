@@ -42,6 +42,7 @@ See https://vairified.github.io/vairified.py for full documentation.
 
 from vairified.client import (
     ENVIRONMENTS,
+    EventsResource,
     LeaderboardResource,
     MatchesResource,
     MembersResource,
@@ -56,6 +57,19 @@ from vairified.errors import (
     RateLimitError,
     VairifiedError,
     ValidationError,
+)
+from vairified.event_models import (
+    EventClub,
+    EventCreator,
+    EventLocation,
+    EventMember,
+    EventMembers,
+    EventsPage,
+    EventSubmission,
+    EventSubmissionLocation,
+    PartnerEvent,
+    SubmittedEvent,
+    WithdrawnEvent,
 )
 from vairified.models import (
     AttributionOutcomeEntry,
@@ -130,6 +144,7 @@ __all__ = [
     # Client + sub-resources
     "Vairified",
     "ENVIRONMENTS",
+    "EventsResource",
     "LeaderboardResource",
     "MatchesResource",
     "MembersResource",
@@ -178,6 +193,18 @@ __all__ = [
     "TournamentImportResult",
     "WebhookDelivery",
     "WebhookDeliveriesResult",
+    # Partner events
+    "EventClub",
+    "EventCreator",
+    "EventLocation",
+    "EventMember",
+    "EventMembers",
+    "EventsPage",
+    "PartnerEvent",
+    "SubmittedEvent",
+    "WithdrawnEvent",
+    "EventSubmission",
+    "EventSubmissionLocation",
     # Request models
     "Game",
     "Match",
