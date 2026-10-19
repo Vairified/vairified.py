@@ -259,8 +259,8 @@ Migrating from 0.8.x to 0.9.0
 
 0.9.0 removes and renames nothing in the SDK. Three SDK changes can affect
 existing code (the first sections below), and four API behaviour changes need a
-look even though code runs unchanged: ``S`` is now ``VS``, ``R`` is now ``RO``,
-the leaderboard's ``verified_only`` default, and the leaderboard category names.
+look even though code runs unchanged: ``S`` is now ``VS``, ``Rv`` is no longer
+sent, the leaderboard's ``verified_only`` default, and the leaderboard category names.
 
 ``sort_by`` only accepts the sortable fields
 --------------------------------------------
@@ -316,39 +316,37 @@ Better still, use the split key (``singles-open``, ``singles-50+``) or
 ``label``, which never changed. As a leaderboard ``category``, ``"S"`` still
 resolves to ``singles``.
 
-``R`` is now ``RO``
--------------------
+``Rv`` is no longer sent
+------------------------
 
-The recreational doubles chain is ``RO`` ("Recreational Overall") for every
-player, in ``abbr`` and ``label`` alike. Before 0.9.0 it was ``R`` for a player
-not verified in the sport and ``Rv`` for one verified there; neither ``R`` nor
-``Rv`` is sent any more. The bracket suffix is unchanged: ``R50+`` is now
-``RO50+``. The labels the API sends are ``VO``, ``VG``, ``VM``, ``VS``, ``RO``
-and ``RS`` (plus a bracket suffix such as ``RS40+``).
+The recreational doubles chain ("Recreational") is ``R`` for every player, in
+``abbr`` and ``label`` alike. Before 0.9.0 it was ``R`` for a player not
+verified in the sport and ``Rv`` for one verified there; ``Rv`` is not sent any
+more. The bracket suffix is unchanged (``R50+``). The labels the API sends are
+``VO``, ``VG``, ``VM``, ``VS``, ``R`` and ``RS`` (plus a bracket suffix such as
+``RS40+``).
 
 .. code-block:: python
 
-   # Before -- matched the old recreational abbreviations
-   rec = split.abbr in ("R", "Rv")        # never True now
+   # Before -- told a verified player apart by the recreational abbreviation
    verified = pb.abbr == "Rv"             # never True now
+   unverified = pb.abbr == "R"            # now True for verified players too
    # After
-   rec = split.abbr.startswith("RO")      # any bracket
    verified = pb.is_vairified             # a verified VO / VG / VM / VS rating there
 
-Better still, use the split key (``recreational-open``, ``recreational-50+``),
-which never changed. Also replace ``by_label("R")`` / ``by_label("Rv")`` with
-``by_label("RO")``. As a leaderboard ``category``, ``"R"`` and ``"Rv"`` still
-resolve to ``recreational``, but ``LEADERBOARD_CATEGORY_LABELS`` lists ``"RO"``
-only.
+To find the recreational chain, use the split key (``recreational-open``,
+``recreational-50+``), which never changed. Also replace ``by_label("Rv")`` with
+``by_label("R")``. As a leaderboard ``category``, ``"Rv"`` still resolves to
+``recreational``, but ``LEADERBOARD_CATEGORY_LABELS`` lists ``"R"`` only.
 
 Leaderboard category names are the full track names
 ----------------------------------------------------
 
 ``GET /leaderboard/categories`` (``categories()``, and ``name`` on
-``category_list()``) names the six tracks ``Vairified Overall``, ``Vairified
-Gender``, ``Vairified Singles``, ``Vairified Mixed``, ``Recreational Overall``
-and ``Recreational Singles``. They were ``Doubles``, ``Same-Gender Doubles``,
-``Singles``, ``Mixed Doubles``, ``Recreational`` and ``Recreational Singles``.
+``category_list()``) names the verified tracks ``Vairified Overall``, ``Vairified
+Gender``, ``Vairified Singles`` and ``Vairified Mixed``. They were ``Doubles``,
+``Same-Gender Doubles``, ``Singles`` and ``Mixed Doubles``. The recreational
+tracks keep ``Recreational`` and ``Recreational Singles``.
 If you matched on ``name``, match on ``code`` instead; it never changed.
 
 Leaderboard ``verified_only`` no longer defaults to "unverified only"
@@ -366,14 +364,14 @@ unset / ``None``    unverified players only    no filter -- everyone
 ==================  =========================  ========================
 
 Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
-verified players whatever it says; the recreational boards (``RO``, ``RS``) rank
+verified players whatever it says; the recreational boards (``R``, ``RS``) rank
 everyone unless you pass ``True``. There is no longer a way to list *only*
 unverified players; if you relied on that, filter the page yourself.
 
 .. code-block:: python
 
-   await client.leaderboard.list(category="RO")                      # everyone
-   await client.leaderboard.list(category="RO", verified_only=True)  # VAIRified only
+   await client.leaderboard.list(category="R")                      # everyone
+   await client.leaderboard.list(category="R", verified_only=True)  # VAIRified only
 
 Six leaderboard tracks
 ----------------------
@@ -391,7 +389,7 @@ Nothing to change in code, but don't rely on the old behaviour:
 
 - **Verified-track splits** (``overall-*``, ``gender-*``, ``mixed-*``,
   ``singles-*``) are absent for a player not verified in that sport. The
-  primary rating falls back to the recreational chain (``RO``). Use
+  primary rating falls back to the recreational chain (``R``). Use
   ``key in sport_rating`` before you index.
 - **On the leaderboard**, ``list()`` and ``categories()`` now check the API
   key the SDK sends. An invalid key raises ``AuthenticationError``, a key

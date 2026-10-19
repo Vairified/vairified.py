@@ -120,14 +120,14 @@ class TestRatingTracksCase:
         assert is_rating_updated_event(event)
 
         pb = RatingUpdatedSport.model_validate(event.data.sports["pickleball"])
-        assert pb.label == "RO"
-        assert pb.abbr == "RO"
+        assert pb.label == "R"
+        assert pb.abbr == "R"
         assert pb.is_vairified is False
         assert pb.rating_splits["recreational_singles-open"] == {
             "rating": 3.52,
             "abbr": "RS",
             "label": "RS",
         }
-        assert pb.rating_splits["recreational-open"]["label"] == "RO"
+        assert pb.rating_splits["recreational-open"]["label"] == "R"
         assert "recreational_gender-open" not in pb.rating_splits
         assert "overall-open" not in pb.rating_splits
