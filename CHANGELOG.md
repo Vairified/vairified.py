@@ -7,6 +7,158 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.9.0] - Unreleased
+
+Mirrors the Partner API v1 rating-tracks release. No field is removed or renamed. Three
+changes can affect existing code: `sort_by` / `SearchFilters.sort_field` are narrowed to a
+`Literal` (type checkers only, there is no runtime check), `sort_order` is narrowed to
+`"asc"` / `"desc"`, and an unset `sort_order` now gives ascending order instead of descending.
+Four API behaviour changes need a look too: verified singles' `abbr` is `VS` (it was `S`), the
+recreational chain is `RD` for every player (it was `R`, and `Rv` for a verified player), the
+leaderboard's `verified_only` no longer means "unverified only" when it is unset or `False`, and
+leaderboard category `name`s are the full track names. See the [migration guide](docs/migrating.rst).
+
+### Added
+
+- **`label` on every rating split and on each sport** -- `RatingSplit.label` and
+  `SportRating.label` (`str | None`): the label the VAIRified web app shows, bracket suffix
+  included. The labels are `VO`, `VG`, `VM`, `VS` (verified tracks), `RD` (the recreational
+  doubles chain, "Recreational Doubles") and `RS` (recreational singles), e.g. `VS12-13`, `RD50+`,
+  `RS40+`. Typed `str | None` only
+  so an older API, which does not send it, still parses. Use it for display. Also on the webhook's
+  `RatingUpdatedSport`.
+- **Label lookup** -- `sport_rating.by_label("VS")` and `member.split_by_label("RS40+", sport=...)`,
+  alongside `get()` / `split()`.
+- **The recreational singles split** `recreational_singles-*` (abbr `RS` plus the bracket
+  suffix) appears in `rating_splits`. It never becomes a sport's primary rating. (The engine's
+  recreational same-gender and mixed tracks are internal; the API never sends them.)
+- **Six leaderboard tracks** -- the `LeaderboardCategory` enum (`OVERALL`, `GENDER`, `SINGLES`,
+  `MIXED`, `RECREATIONAL`, `RECREATIONAL_SINGLES`). `category` on `leaderboard.list()` /
+  `rank()` also accepts the labels in `LEADERBOARD_CATEGORY_LABELS` (`VO VG VM VS RD RS`, any
+  case), typed as `LeaderboardCategoryLabel`. Plain strings keep working, and the API still
+  resolves the pre-0.9.0 labels `S` (for `VS`) and `R`, `RO` and `Rv` (for `RD`).
+  `list(LeaderboardCategory)` gives the six codes in API order, the equivalent of the
+  TypeScript SDK's `LEADERBOARD_CATEGORIES`.
+- **`leaderboard.category_list()`** -- the six tracks from `GET /leaderboard/categories` as
+  frozen `LeaderboardCategoryInfo` models (`code`, `name`, `label`, `verified_only`). `name` is
+  the track's full name: `Vairified Overall`, `Vairified Gender`, `Vairified Mixed`, `Vairified
+  Singles`, `Recreational Doubles`, `Recreational Singles`. `categories()` still returns the raw
+  dict.
+- **`PermissionDeniedError`** (HTTP 403), a `VairifiedError` subclass. A 403 used to arrive as a
+  plain `VairifiedError` with `status_code == 403`; existing `except VairifiedError` blocks keep
+  working.
+- **`ScoreEntryPausedError`** (HTTP 503, `code == "SCORE_ENTRY_PAUSED"`), with `retry_after` in
+  seconds. While Vairified pauses score entry for a rating maintenance window,
+  `matches.submit()` and `matches.tournament_import()` raise it; reads are unaffected. Nothing
+  was saved: resubmit the same payload after `retry_after` seconds (the API asks for 300).
+  `retry_after` comes from the `Retry-After` header, or the body's `retryAfter` when the header
+  is missing.
+- **`ServiceUnavailableError`** (HTTP 503), the parent of `ScoreEntryPausedError`, with
+  `retry_after` when the server sends one. A 503 used to arrive as a plain `VairifiedError` with
+  `status_code == 503`; existing `except VairifiedError` blocks keep working. The SDK still never
+  retries on its own; if you retry, wait at least `retry_after` seconds and cap the attempts.
+- **`PARTNER_SEARCH_SORT_FIELDS`** and the `PartnerSearchSortField` literal type.
+- **`sport_code` on `leaderboard.list()` and `rank()`**, sent as `sportCode`. Rank and percentile
+  are now per sport, so pass it for any player who plays more than one sport.
+
+### Changed
+
+- **Verified-track ratings are no longer sent for a player who is not verified in that sport.**
+  This applies to `members.get()`, `get_bulk()`, `get_by_email()` and `search()`. The splits
+  `overall-*`, `gender-*`, `mixed-*`, `singles-*` and `asymmetric-*` are missing from
+  `rating_splits`. The sport's primary `rating` / `abbr` falls back to the recreational chain
+  (`recreational-open`, abbr `RD`). A sport with nothing visible is missing from
+  `member.sport`, so `rating_for()` returns `None` for it. *For integrators:* do not assume
+  `overall-open` exists. Check `key in sport_rating` or `sport_rating.is_vairified` first.
+- **`members.rating_updates()`** follows the same rule. `new_rating`, `sport` and `changed_at`
+  come from the newest rating a partner may see.
+- **`rating.updated` webhook** follows the same rule. No event is sent when only withheld ratings
+  change. A change confined to `RS` now sends one. The snapshot carries the new `label` and the
+  `recreational_singles-*` keys; `verify_webhook()` already passes unknown keys through, so no
+  receiver change is needed.
+- **Event members** (`GET /partner/event/{eventId}/members`, which this SDK does not wrap):
+  `rating` is the verified overall-open value, otherwise recreational-open, otherwise absent.
+- **Verified singles' `abbr` is `VS`, matching the web app** (it was `S`). The `singles-*`
+  split's `abbr`, and a sport's primary `abbr` when it is verified singles, are now `VS` plus the
+  bracket suffix (`VS`, `VS50+`, `VS12-13`) instead of `S` (`S`, `S50+`). Same field, same type;
+  only the value changes, in `members.*`, `rating_updates()`, `rating.updated` webhooks and the
+  release refresh. `abbr` now equals `label` for every verified track. *For integrators:* if you
+  match on `S`, match on `VS` (see the migration guide). As a leaderboard `category`, `"S"` still
+  resolves to `singles`.
+- **The recreational chain is `RD` ("Recreational Doubles") for every player; `Rv` is no
+  longer sent -- a behaviour change of an existing field.** Before 0.9.0 it was `R` for a player
+  not verified in the sport and `Rv` for one verified there. Now `abbr` and `label` are `RD`
+  whoever the player is, in `members.*`, `rating_updates()`, `rating.updated` and the release
+  refresh; the bracket suffix carries over (`RD50+`, it was `R50+`). The split keys
+  (`recreational-open`, `recreational-50+`) and the leaderboard code `recreational` do not change.
+  *For integrators:* code that matches `abbr == "R"` or `abbr == "Rv"` never matches now. To find
+  the chain, use the split key (`recreational-open`); to spot a verified player, use
+  `sport_rating.is_vairified`.
+- **Leaderboard categories carry full track names.** `GET /leaderboard/categories`
+  (`categories()` / `category_list()`) now names the verified tracks `Vairified Overall`,
+  `Vairified Gender`, `Vairified Singles`, `Vairified Mixed` (they were `Doubles`, `Same-Gender
+  Doubles`, `Singles`, `Mixed Doubles`), and the recreational doubles track `Recreational
+  Doubles` with the label `RD` (it was `Recreational`, label `R`); `Recreational Singles` is
+  unchanged. Match on `code`, never on `name`.
+- **`is_vairified` means a verified `VO` / `VG` / `VM` / `VS` rating in the sport.** Recreational
+  ratings (`RD`, `RS`) never make a player VAIRified. No existing player changes.
+- **Leaderboard:** verified boards (`overall`, `gender`, `mixed`, `singles`) list only players
+  verified in the sport, for API keys too. The recreational boards (`RD`, `RS`) rank every player.
+  Rank and percentile are scoped to the sport.
+- **Leaderboard: `verified_only` is an optional narrowing filter.** `True` lists only VAIRified
+  players; unset or `False` applies no filter. Before, the API read an unset or `False` value as
+  "unverified players only", so a call that left it out got an empty verified board and half of
+  the recreational one. `verified_only` on `leaderboard.list()` now defaults to `None` (was
+  `False`) and is sent only when you set it, so an explicit `False` goes out instead of being
+  dropped. *For integrators:* if you relied on the old default to list unverified players, that
+  filter no longer exists.
+- **Leaderboard: the key the SDK sends is now checked on the public routes.** On
+  `leaderboard.list()`, `categories()` and `category_list()`, an invalid or revoked key raises
+  `AuthenticationError` (401). A key without `leaderboard:read` raises `PermissionDeniedError`
+  (403). Before, these routes ignored the key.
+- **Rating splits: `rating_splits` never contains provisional (`provisional-*`) or asymmetric
+  (`asymmetric-*`) splits** -- in member lookups, `rating_updates()`, `rating.updated` webhooks and
+  the release refresh. Earlier 0.9.0 builds received them with `label: None`. A sport whose only
+  ratings were on those tracks no longer appears. `label` is always one of `VO`, `VG`, `VM`, `VS`,
+  `RD`, `RS` (plus the age-bracket suffix); it stays typed `str | None` so older APIs still parse.
+- **`members.search()` sorting is limited to `lastName`, `firstName`, `memberId`, `city`, `state`
+  and `country`.** The default is `lastName` ascending. `sort_by` and
+  `SearchFilters.sort_field` are now typed `PartnerSearchSortField`, a `Literal`. This applies to
+  type checkers only. A value outside the list is still sent, as in the TypeScript SDK, and the
+  API answers it with a 400 (`ValidationError`). `sort_order` / `SearchFilters.sort_direction`
+  are typed `Literal["asc", "desc"]`.
+  `rating` was never a real sort: it always failed with a server error (500), and now gets the 400.
+
+### Deprecated
+
+- **`club_id` on `leaderboard.list()`, and `city` / `club_id` on `leaderboard.rank()`.** The API
+  does not accept these fields and refused any request that carried them with a 400. They are
+  still accepted so existing calls keep working, but they are no longer sent, and passing one
+  raises a `DeprecationWarning`. They will be removed in a future release. (`city` on
+  `leaderboard.list()` is supported and unchanged.)
+
+### Fixed
+
+- **Docs: member ids.** Every README, guide, quickstart, migration-guide and docstring example
+  used `vair_mem_…` ids, which the Partner API no longer has. The member id (e.g. `"4873327"`)
+  is the only canonical id, and the examples now use it. `leaderboard.rank()` documents that
+  `player_id` takes a member id, a UUID or `"@username"`; anything else is a 404. No code
+  changed.
+- **`leaderboard.rank()` always failed with a 400.** It sent `contextSize`, which the API rejects
+  as an unknown field; the request body now matches the API exactly, and `context_size` goes out
+  as `context`. Its default `category` was also `"doubles"`, a code the API retired; it is now
+  `"overall"`.
+- **`members.search()` always sent `sortDirection=desc`.** `sort_order` defaulted to `"desc"`,
+  unlike the TypeScript SDK, which sends nothing when unset. It now defaults to `None` and is
+  sent only when you set it, so an unset search gets the API's default, ascending. Pass
+  `sort_order="desc"` to keep the old order.
+- **`leaderboard.list(club_id=...)` failed with a 400**, for the same reason. `club_id` is no
+  longer sent (see Deprecated).
+- **Wheelchair ratings no longer overwrite standard splits** (API fix). A wheelchair rating
+  shares its standard split's key (`{category}-{bracket}`), so for a player with both it could
+  replace the standard value. Wheelchair rows are no longer sent to partners, and the standard
+  splits always carry the standard rating. No SDK change.
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

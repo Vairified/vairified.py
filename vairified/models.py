@@ -25,9 +25,11 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, SkipValidation
+
+from vairified.partner_search_sort import PartnerSearchSortField
 
 # ---------------------------------------------------------------------------
 # Response config — shared by every read-side model.
@@ -76,6 +78,20 @@ class RatingSplit(BaseModel):
 
     rating: float
     abbr: str
+    """Partner abbreviation (``VO``, ``VS12-13``, ``RD``).
+
+    Before 0.9.0 verified singles was ``S`` and the recreational doubles chain
+    ``R`` (``Rv`` for a verified player)."""
+    label: str | None = None
+    """The label the VAIRified web app shows for this split, bracket suffix included
+    -- ``VO``, ``VG``, ``VM``, ``VS`` (verified tracks), ``RD`` (the recreational
+    doubles chain, "Recreational Doubles", for every player) and ``RS``
+    (recreational singles), e.g. ``VS12-13``. The API never sends provisional or
+    asymmetric splits; ``None`` only when an older API omits the label.
+
+    Use this when you display a label. Since 0.9.0 :attr:`abbr` matches it on all
+    six tracks (verified singles is ``VS``, it was ``S``; the recreational chain
+    is ``RD`` for every player; it was ``R``, and ``Rv`` for a verified player)."""
 
     def __repr__(self) -> str:  # pragma: no cover - REPL affordance
         return f"<RatingSplit {self.rating:.3f} {self.abbr}>"
@@ -86,9 +102,17 @@ class SportRating(BaseModel):
     A player's ratings for a single sport.
 
     The top-level ``rating`` / ``abbr`` is the primary rating for that
-    sport (conventionally the overall-open bracket). Every category × age
-    bracket the player has played is also available under
-    :attr:`rating_splits`, keyed by ``{category}-{bracketCode}``.
+    sport: the verified overall-open rating (``VO``) for a player verified in
+    the sport, otherwise the recreational chain (``RD``). Every
+    category × age bracket the API sends is also available under
+    :attr:`rating_splits`, keyed by ``{category}-{bracketCode}``, and by web
+    label through :meth:`by_label`.
+
+    Verified-track splits (``overall-*``, ``gender-*``, ``mixed-*``,
+    ``singles-*``) are present only for a player verified in the sport -- the
+    API leaves them out otherwise, so check membership rather than assuming a
+    key. Provisional (``provisional-*``) and asymmetric (``asymmetric-*``)
+    splits are never sent.
 
     This class is dict-like — you can access splits by subscript,
     iterate them, check membership, and get the length without touching
@@ -106,6 +130,9 @@ class SportRating(BaseModel):
 
     rating: float
     abbr: str
+    label: str | None = None
+    """The web app's label for the primary rating (``VO``, ``RD``), or
+    ``None`` when the API sent none. See :attr:`RatingSplit.label`."""
     rating_splits: dict[str, RatingSplit] = Field(
         default_factory=dict, alias="ratingSplits"
     )
@@ -114,7 +141,8 @@ class SportRating(BaseModel):
     # sport-scoped, so these live on each sport rather than the member status.
     # Defaulted so the SDK stays compatible with API responses that predate #783.
     is_vairified: bool = Field(default=False, alias="isVairified")
-    """Player is VAIRified in this sport (has a verified, non-recreational rating)."""
+    """Player is VAIRified in this sport: has a verified VO / VG / VM / VS
+    rating there."""
     is_rater: bool = Field(default=False, alias="isRater")
     """Active VAIR Pro (can rate) in this sport. Alias of :attr:`is_vair_pro`."""
     is_vair_pro: bool = Field(default=False, alias="isVairPro")
@@ -143,6 +171,19 @@ class SportRating(BaseModel):
     def get(self, key: str, default: RatingSplit | None = None) -> RatingSplit | None:
         """Dict-style safe lookup."""
         return self.rating_splits.get(key, default)
+
+    def by_label(self, label: str) -> RatingSplit | None:
+        """
+        Look up a rating split by the label the web app shows, bracket suffix
+        included (e.g. ``"VS"``, ``"VO40+"``, ``"RS12-13"``, ``"RD"``).
+
+        Matches :attr:`RatingSplit.label` exactly, as the API sends it.
+        Returns ``None`` when no split carries that label.
+        """
+        return next(
+            (split for split in self.rating_splits.values() if split.label == label),
+            None,
+        )
 
     def __repr__(self) -> str:  # pragma: no cover
         return (
@@ -217,8 +258,9 @@ class Member(BaseModel):
     detail for public search).
 
     Rating data lives under :attr:`sport` — a dict keyed by sport code.
-    The backend returns only the sports the player has ratings in, or
-    only the sports requested via the ``?sport=`` query filter. Use
+    The backend returns only the sports the player has a visible rating in,
+    or only the sports requested via the ``?sport=`` query filter. A sport
+    whose only ratings are unverified verified-track values is left out. Use
     :meth:`rating_for` to fetch the primary rating for a specific sport
     with a sensible default.
     """
@@ -299,6 +341,23 @@ class Member(BaseModel):
             return None
         return sport_rating.get(key)
 
+    def split_by_label(
+        self,
+        label: str,
+        sport: str = "pickleball",
+    ) -> RatingSplit | None:
+        """
+        Get a rating split for a sport by the label the web app shows.
+
+        :param label: Web label, bracket suffix included, e.g. ``"VS"`` or
+            ``"RS40+"``. See :meth:`SportRating.by_label`.
+        :param sport: Sport code, defaults to ``"pickleball"``.
+        """
+        sport_rating = self.sport.get(sport)
+        if sport_rating is None:
+            return None
+        return sport_rating.by_label(label)
+
     def __repr__(self) -> str:  # pragma: no cover
         primary = next(iter(self.sport.values()), None)
         if primary:
@@ -321,6 +380,9 @@ class RatingUpdate(BaseModel):
     Returned by :meth:`Vairified.members.rating_updates` (polling) and
     delivered via webhook callbacks to partners that have registered a
     webhook URL.
+
+    ``new_rating``, ``sport`` and ``changed_at`` come from the newest rating a
+    partner may see: an unverified verified-track value never drives an update.
     """
 
     model_config = _RESPONSE_CONFIG
@@ -395,8 +457,8 @@ class Match(BaseModel):
 
     A match has:
 
-    * ``teams`` — a list of teams, each a list of player IDs (external
-      ``vair_mem_xxx``, numeric member IDs, or UUIDs). Supports n-team
+    * ``teams`` — a list of teams, each a list of member ids as strings
+      (e.g. ``"4873327"``). Supports n-team
       × n-player matches natively: ``[[p1, p2], [p3, p4]]`` for standard
       doubles, ``[[p1], [p2]]`` for singles, ``[[p1], [p2], [p3]]``
       for a 3-way round robin.
@@ -465,8 +527,8 @@ class MatchBatch(BaseModel):
             matches=[
                 Match(
                     identifier="m1",
-                    teams=[["vair_mem_aaa", "vair_mem_bbb"],
-                           ["vair_mem_ccc", "vair_mem_ddd"]],
+                    teams=[["4873327", "4873328"],
+                           ["4873329", "4873330"]],
                     games=[Game(scores=[11, 8]),
                            Game(scores=[11, 5])],
                 ),
@@ -590,8 +652,16 @@ class SearchFilters(BaseModel):
     rating2: float | None = None
 
     # Sort + pagination
-    sort_field: str | None = Field(default=None, alias="sortField")
-    sort_direction: str | None = Field(default=None, alias="sortDirection")
+    # Typed to the whitelist, but NOT checked at runtime (SkipValidation), which
+    # is exactly what the TypeScript type does: a type checker flags a bad value,
+    # and one that slips through still reaches the API, whose 400 surfaces as
+    # vairified.ValidationError in both SDKs -- not as a pydantic error here.
+    sort_field: Annotated[PartnerSearchSortField | None, SkipValidation] = Field(
+        default=None, alias="sortField"
+    )
+    sort_direction: Annotated[Literal["asc", "desc"] | None, SkipValidation] = Field(
+        default=None, alias="sortDirection"
+    )
     offset: int | None = None
     limit: int | None = None
 

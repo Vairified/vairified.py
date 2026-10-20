@@ -57,7 +57,7 @@ def _member_payload(**overrides: Any) -> dict[str, Any]:
                 "ratingSplits": {
                     "overall-open": {"rating": 3.915, "abbr": "VO"},
                     "gender-open": {"rating": 3.880, "abbr": "VG"},
-                    "singles-open": {"rating": 3.710, "abbr": "S"},
+                    "singles-open": {"rating": 3.710, "abbr": "VS"},
                 },
                 "isVairified": True,
                 "isRater": False,

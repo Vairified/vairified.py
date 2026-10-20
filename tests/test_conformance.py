@@ -21,7 +21,7 @@ from pathlib import Path
 
 import pytest
 
-from vairified import verify_webhook
+from vairified import RatingUpdatedSport, is_rating_updated_event, verify_webhook
 from vairified.errors import WebhookSignatureError
 
 _SUITE = json.loads(
@@ -52,7 +52,7 @@ def test_suite_matches_what_the_typescript_sdk_runs():
     # the two files match -- only CI fetching the sibling could -- but it pins
     # the count and version so a silent truncation is visible.
     assert _SUITE["version"] == 2
-    assert len(_CASES) >= 55
+    assert len(_CASES) >= 56
     assert len({c["name"] for c in _CASES}) == len(_CASES)
 
 
@@ -102,3 +102,32 @@ def test_conformance(case):
         with pytest.raises(WebhookSignatureError) as excinfo:
             verify_webhook(body, case["header"], secret, **kwargs)
         assert excinfo.value.reason == case["reason"], case["why"]
+
+
+class TestRatingTracksCase:
+    """The verdict loop above only proves the case verifies. This reads the same
+    case and asserts what the TypeScript twin asserts about its contents, so the
+    two SDKs agree on what a partner receives, not just on accepting it."""
+
+    def test_rd_label_rs_split_and_no_overall_open(self):
+        case = next(c for c in _CASES if c["name"] == "accept/ru-rating-tracks")
+        event = verify_webhook(
+            bytes.fromhex(case["bodyHex"]),
+            case["header"],
+            case["secret"],
+            now_seconds=case["nowSeconds"],
+        )
+        assert is_rating_updated_event(event)
+
+        pb = RatingUpdatedSport.model_validate(event.data.sports["pickleball"])
+        assert pb.label == "RD"
+        assert pb.abbr == "RD"
+        assert pb.is_vairified is False
+        assert pb.rating_splits["recreational_singles-open"] == {
+            "rating": 3.52,
+            "abbr": "RS",
+            "label": "RS",
+        }
+        assert pb.rating_splits["recreational-open"]["label"] == "RD"
+        assert "recreational_gender-open" not in pb.rating_splits
+        assert "overall-open" not in pb.rating_splits

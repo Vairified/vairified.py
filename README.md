@@ -39,7 +39,7 @@ from vairified import Vairified
 
 async def main() -> None:
     async with Vairified(api_key="vair_pk_xxx") as client:
-        member = await client.members.get("vair_mem_xxx")
+        member = await client.members.get("4873327")
         print(member.name, "rated", member.rating_for("pickleball"))
 
 asyncio.run(main())
@@ -67,7 +67,7 @@ Every operation lives on a sub-resource that matches the REST path:
 
 ```python
 async with Vairified(api_key="vair_pk_xxx") as client:
-    member = await client.members.get("vair_mem_xxx")
+    member = await client.members.get("4873327")
 
     print(member.name)                      # Full name
     print(member.display_name)               # "Mike B."
@@ -75,23 +75,30 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 
     # Dict-like access to rating splits + per-sport status for a sport
     pb = member.sport["pickleball"]
-    print(pb.rating, pb.abbr)                # 3.915 VO
+    print(pb.rating, pb.abbr, pb.label)      # 3.915 VO VO
     print(pb.is_vairified)                   # True (per-sport, Vairified#783)
     print(pb["overall-open"].rating)         # 3.915
     print("singles-open" in pb)              # True
+    print(pb.by_label("VS").abbr)            # "VS" -- look up by web label
+    print(pb["recreational-open"].label)     # "RD" -- for every player
     for key, split in pb:
-        print(key, split.rating)
+        print(key, split.rating, split.label)
 ```
+
+Verified-track splits (`overall-*`, `gender-*`, `mixed-*`, `singles-*`) are sent
+only for a player verified in that sport. For anyone else they are absent, and
+the primary `rating` / `abbr` is the recreational chain (`RD`). Check
+`key in pb` rather than assuming a key exists.
 
 ### Filter ratings to specific sports
 
 ```python
 # Just pickleball
-member = await client.members.get("vair_mem_xxx", sport="pickleball")
+member = await client.members.get("4873327", sport="pickleball")
 
 # Multiple sports
 member = await client.members.get(
-    "vair_mem_xxx",
+    "4873327",
     sport=["pickleball", "padel"],
 )
 ```
@@ -199,13 +206,13 @@ async with Vairified(api_key="vair_pk_xxx") as client:
         matches=[
             Match(
                 identifier="m1",
-                teams=[["vair_mem_aaa", "vair_mem_bbb"],
-                       ["vair_mem_ccc", "vair_mem_ddd"]],
+                teams=[["4873327", "4873328"],
+                       ["4873329", "4873330"]],
                 games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
             ),
             Match(
                 identifier="m2",
-                teams=[["vair_mem_eee"], ["vair_mem_fff"]],   # singles
+                teams=[["4873331"], ["4873332"]],   # singles
                 games=[Game(scores=[11, 9]), Game(scores=[11, 7])],
             ),
         ],
@@ -454,30 +461,54 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 ## Leaderboards
 
 ```python
+from vairified import LeaderboardCategory, Vairified
+
 async with Vairified(api_key="vair_pk_xxx") as client:
     # Global doubles leaderboard
     lb = await client.leaderboard.list()
 
-    # Texas singles, verified only
+    # Texas singles (a verified board: verified players only)
     tx = await client.leaderboard.list(
-        category="singles",
+        category=LeaderboardCategory.SINGLES,  # or "singles", or the label "VS"
         scope="state",
         state="TX",
-        verified_only=True,
         limit=50,
     )
 
     # A specific player's rank with 5 players on either side
     rank = await client.leaderboard.rank(
-        "vair_mem_xxx",
-        category="doubles",
+        "4873327",
+        sport_code="pickleball",  # rank and percentile are per sport
+        category="overall",
         context_size=5,
     )
     print(f"#{rank['rank']} (top {rank['percentile']:.1f}%)")
 
-    # Available categories, brackets, scopes
+    # The recreational board (label "RD") ranks everyone; verified_only narrows
+    # it to VAIRified players. Leave verified_only unset for no filter.
+    rec = await client.leaderboard.list(category="RD")
+    rec_verified = await client.leaderboard.list(category="RD", verified_only=True)
+
+    # The six tracks as typed models
+    for track in await client.leaderboard.category_list():
+        print(track.code, track.label, track.name, track.verified_only)
+        # recreational RD Recreational Doubles False
+
+    # Raw categories, brackets, scopes, rating tiers
     categories = await client.leaderboard.categories()
 ```
+
+`list(LeaderboardCategory)` gives the six codes in API order, the Python
+equivalent of the TypeScript SDK's `LEADERBOARD_CATEGORIES`.
+
+Tracks: `overall` (VO), `gender` (VG), `singles` (VS), `mixed` (VM) are verified
+boards and list only players verified in the sport; `recreational` (R) and
+`recreational_singles` (RS) are recreational boards and rank every player.
+`verified_only` is an optional filter, sent only when you set it: `True` lists only
+VAIRified players, unset or `False` applies no filter. Rank and percentile are scoped
+to the sport. The leaderboard routes are public, but the key the SDK sends is
+checked: an invalid or revoked key raises `AuthenticationError`, a key without
+`leaderboard:read` raises `PermissionDeniedError`.
 
 ## Models
 
@@ -508,6 +539,7 @@ member.sport["pickleball"].is_vair_pro       # per-sport
 member.sport["pickleball"].is_vair_pro_status  # "ACTIVE" | "PENDING" | None
 member.rating_for("pickleball")      # float | None
 member.split("overall-open")         # RatingSplit | None
+member.split_by_label("VS")          # RatingSplit | None, by web label
 ```
 
 ### `SportRating` (dict-like)
@@ -515,8 +547,11 @@ member.split("overall-open")         # RatingSplit | None
 ```python
 pb = member.sport["pickleball"]
 pb.rating                     # Primary rating for this sport
-pb.abbr                       # "VO", "VG", etc.
+pb.abbr                       # "VO", "RD", etc. (partner codes)
+pb.label                      # "VO", "RD" -- the web app's label, or None
 pb["overall-open"].rating     # Any split key
+pb["overall-open"].label      # Every split has a label too ("VS12-13", "RS")
+pb.by_label("RS")             # RatingSplit | None, by web label
 len(pb)                       # Number of splits
 "singles-40+" in pb           # Membership check
 for key, split in pb: ...     # Iterate (yields (key, RatingSplit) tuples)
@@ -600,30 +635,62 @@ async with Vairified() as client:   # reads both env vars
 
 ## Error Handling
 
+The SDK maps HTTP status codes to typed exceptions. All typed exceptions inherit from
+`VairifiedError`, so a single `except VairifiedError` catches everything.
+
+| Status | Exception | Means |
+|---|---|---|
+| 400 | `ValidationError` | Bad request, invalid input |
+| 401 | `AuthenticationError` | Invalid or missing API key |
+| 403 | `PermissionDeniedError` | Missing scope, or the player has not connected |
+| 404 | `NotFoundError` | Resource not found |
+| 429 | `RateLimitError` | Rate limit exceeded; `retry_after` seconds |
+| 503 + code `SCORE_ENTRY_PAUSED` | `ScoreEntryPausedError` | Score entry is paused for maintenance; `retry_after` seconds |
+| 503 | `ServiceUnavailableError` | Temporarily unavailable; `retry_after` seconds when the server says |
+| other | `VairifiedError` | Any other failure; check `status_code` |
+| — | `OAuthError` | OAuth-specific failure; `error_code` |
+
+`ScoreEntryPausedError` subclasses `ServiceUnavailableError`. During a rating maintenance
+window Vairified pauses score entry: `matches.submit()` and `matches.tournament_import()` raise
+it, while reads keep working. Nothing was saved, so resubmit the same payload later.
+
+**The SDK never retries a request on its own**, for any status. If you retry a 429 or a 503,
+wait at least `e.retry_after` seconds (the score-entry pause asks for 300) and cap the number of
+attempts; retrying in a tight loop only adds load to a service that has said no.
+
 ```python
 from vairified import (
     Vairified,
     VairifiedError,
     RateLimitError,
     AuthenticationError,
+    PermissionDeniedError,
     NotFoundError,
     ValidationError,
     OAuthError,
+    ScoreEntryPausedError,
+    ServiceUnavailableError,
 )
 
 async with Vairified(api_key="vair_pk_xxx") as client:
     try:
-        member = await client.members.get("vair_mem_xxx")
+        member = await client.members.get("4873327")
     except RateLimitError as e:
         print(f"Rate limited; retry after {e.retry_after}s")
     except AuthenticationError:
         print("Invalid API key")
+    except PermissionDeniedError:
+        print("Key lacks the scope, or the player has not connected")
     except NotFoundError:
         print("Member not found")
     except ValidationError as e:
         print(f"Bad request: {e.message}")
     except OAuthError as e:
         print(f"OAuth error: {e.message} (code: {e.error_code})")
+    except ScoreEntryPausedError as e:
+        print(f"Score entry paused; resubmit in {e.retry_after or 300}s")
+    except ServiceUnavailableError as e:
+        print(f"Service unavailable; retry after {e.retry_after}s")
     except VairifiedError as e:
         print(f"API error: {e.message} (status: {e.status_code})")
 ```

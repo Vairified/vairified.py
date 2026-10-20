@@ -9,6 +9,8 @@ See the `CHANGELOG
 <https://github.com/Vairified/vairified.py/blob/main/CHANGELOG.md>`_
 for the full release notes.
 
+Upgrading from 0.8.x? See `Migrating from 0.8.x to 0.9.0`_ at the end.
+
 At a glance
 -----------
 
@@ -44,12 +46,12 @@ replaces the flat ``client.xxx`` methods:
 .. code-block:: python
 
    # Before
-   member = await client.get_member("vair_mem_xxx")
+   member = await client.get_member("4873327")
    results = await client.search(city="Austin")
    result = await client.submit_match(match)
 
    # After
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
    async for member in client.members.search(city="Austin"):
        ...
    result = await client.matches.submit(batch)
@@ -93,14 +95,14 @@ filter:
 .. code-block:: python
 
    # All sports this player has ratings in
-   member = await client.members.get("vair_mem_xxx")
+   member = await client.members.get("4873327")
 
    # Just pickleball
-   member = await client.members.get("vair_mem_xxx", sport="pickleball")
+   member = await client.members.get("4873327", sport="pickleball")
 
    # Multiple sports
    member = await client.members.get(
-       "vair_mem_xxx",
+       "4873327",
        sport=["pickleball", "padel"],
    )
 
@@ -251,3 +253,153 @@ Use ``env=`` instead of writing the full base URL by hand:
 
 Supported values: ``"production"`` (default), ``"staging"``, ``"local"``.
 Reads ``VAIRIFIED_ENV`` from the environment when not supplied.
+
+Migrating from 0.8.x to 0.9.0
+=============================
+
+0.9.0 removes and renames nothing in the SDK. Three SDK changes can affect
+existing code (the first sections below), and four API behaviour changes need a
+look even though code runs unchanged: ``S`` is now ``VS``, ``R`` / ``Rv`` are
+now ``RD``, the leaderboard's ``verified_only`` default, and the leaderboard category names.
+
+``sort_by`` only accepts the sortable fields
+--------------------------------------------
+
+``members.search(sort_by=...)`` and ``SearchFilters.sort_field`` are typed
+``PartnerSearchSortField``, a ``Literal["lastName", "firstName", "memberId",
+"city", "state", "country"]``. The API now refuses any other value with a 400;
+``"rating"`` never worked and always failed with a 500. The narrowing is for type
+checkers only. A plain ``str`` still runs, but mypy / pyright flag it. Check the
+value against the exported tuple:
+
+.. code-block:: python
+
+   from vairified import PARTNER_SEARCH_SORT_FIELDS
+
+   sort_by = raw if raw in PARTNER_SEARCH_SORT_FIELDS else None
+   async for m in client.members.search(sort_by=sort_by):
+       ...
+
+A value outside the list is still sent, as in the TypeScript SDK, and the API's
+400 surfaces as :class:`vairified.ValidationError`.
+
+An unset ``sort_order`` now means ascending
+-------------------------------------------
+
+``sort_order`` defaulted to ``"desc"``, so every search was sent with
+``sortDirection=desc``. It now defaults to ``None`` and is sent only when set,
+which gives the API's default order, ascending by last name. This matches the
+TypeScript SDK. To keep the old order:
+
+.. code-block:: python
+
+   client.members.search(city="Austin", sort_order="desc")
+
+``sort_order`` and ``SearchFilters.sort_direction`` are also typed
+``Literal["asc", "desc"]``.
+
+``S`` is now ``VS``
+-------------------
+
+Verified singles' ``abbr`` is ``VS``, the same code the web app shows (it was
+``S``). The bracket suffix is unchanged: ``S50+`` is now ``VS50+``, ``S12-13``
+is now ``VS12-13``. It applies to every split and to a sport's primary ``abbr``,
+in ``members.*``, ``rating_updates()`` and ``rating.updated``. If you match on
+``S``, match on ``VS``:
+
+.. code-block:: python
+
+   singles = split.abbr.startswith("S")    # never true now
+   singles = split.abbr.startswith("VS")   # verified singles, any bracket
+
+Better still, use the split key (``singles-open``, ``singles-50+``) or
+``label``, which never changed. As a leaderboard ``category``, ``"S"`` still
+resolves to ``singles``.
+
+``R`` and ``Rv`` are now ``RD``
+-------------------------------
+
+The recreational doubles chain ("Recreational Doubles") is ``RD`` for every
+player, in ``abbr`` and ``label`` alike. Before 0.9.0 it was ``R`` for a player
+not verified in the sport and ``Rv`` for one verified there; neither is sent any
+more. The bracket suffix carries over: ``R50+`` is now ``RD50+``. The labels the
+API sends are ``VO``, ``VG``, ``VM``, ``VS``, ``RD`` and ``RS`` (plus a bracket
+suffix such as ``RS40+``).
+
+.. code-block:: python
+
+   # Before -- found the chain, or told a verified player apart, by the abbreviation
+   verified = pb.abbr == "Rv"             # never True now
+   unverified = pb.abbr == "R"            # never True now (it is "RD")
+   # After
+   verified = pb.is_vairified             # a verified VO / VG / VM / VS rating there
+   recreational = pb.get("recreational-open")  # the split key never changed
+
+Code that matches ``abbr == "R"`` or ``abbr == "Rv"`` never matches now. To find
+the recreational chain, use the split key (``recreational-open``,
+``recreational-50+``), which never changed. Also replace ``by_label("R")`` /
+``by_label("Rv")`` with ``by_label("RD")``. As a leaderboard ``category``,
+``"R"``, ``"RO"`` and ``"Rv"`` still resolve to ``recreational``, but
+``LEADERBOARD_CATEGORY_LABELS`` lists ``"RD"`` only.
+
+Leaderboard category names are the full track names
+----------------------------------------------------
+
+``GET /leaderboard/categories`` (``categories()``, and ``name`` on
+``category_list()``) names the verified tracks ``Vairified Overall``, ``Vairified
+Gender``, ``Vairified Singles`` and ``Vairified Mixed``. They were ``Doubles``,
+``Same-Gender Doubles``, ``Singles`` and ``Mixed Doubles``. The recreational
+doubles track is ``Recreational Doubles``, label ``RD`` (it was
+``Recreational``, label ``R``); ``Recreational Singles`` is unchanged.
+If you matched on ``name``, match on ``code`` instead; it never changed.
+
+Leaderboard ``verified_only`` no longer defaults to "unverified only"
+---------------------------------------------------------------------
+
+``verified_only`` on ``leaderboard.list()`` is an optional narrowing filter. Its
+default is now ``None`` (was ``False``), and it is sent only when you set it.
+
+==================  =========================  ========================
+``verified_only``   Before 0.9.0               Now
+==================  =========================  ========================
+unset / ``None``    unverified players only    no filter -- everyone
+``False``           unverified players only    no filter -- everyone
+``True``            verified players only      VAIRified players only
+==================  =========================  ========================
+
+Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
+verified players whatever it says; the recreational boards (``RD``, ``RS``) rank
+everyone unless you pass ``True``. There is no longer a way to list *only*
+unverified players; if you relied on that, filter the page yourself.
+
+.. code-block:: python
+
+   await client.leaderboard.list(category="RD")                      # everyone
+   await client.leaderboard.list(category="RD", verified_only=True)  # VAIRified only
+
+Six leaderboard tracks
+----------------------
+
+``LeaderboardCategory`` (new) is ``OVERALL``, ``GENDER``, ``SINGLES``,
+``MIXED``, ``RECREATIONAL``, ``RECREATIONAL_SINGLES``. The engine's recreational
+same-gender and mixed tracks are internal: the API refuses them as a
+``category`` (``ValidationError``) and never sends their splits, so don't look
+for ``recreational_gender-*`` / ``recreational_mixed-*`` keys.
+
+Behaviour to expect from the API
+--------------------------------
+
+Nothing to change in code, but don't rely on the old behaviour:
+
+- **Verified-track splits** (``overall-*``, ``gender-*``, ``mixed-*``,
+  ``singles-*``) are absent for a player not verified in that sport. The
+  primary rating falls back to the recreational chain (``RD``). Use
+  ``key in sport_rating`` before you index.
+- **On the leaderboard**, ``list()`` and ``categories()`` now check the API
+  key the SDK sends. An invalid key raises ``AuthenticationError``, a key
+  without ``leaderboard:read`` raises ``PermissionDeniedError``.
+- **Deprecated leaderboard options** ``club_id`` (on ``list`` and ``rank``) and
+  ``city`` (on ``rank``) are no longer sent and raise a ``DeprecationWarning``.
+  Remove them.
+- **Rating splits** were already immutable in Python (frozen pydantic models),
+  so the TypeScript SDK's frozen-split change has no Python counterpart.

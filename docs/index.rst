@@ -38,7 +38,7 @@ Quick Example
 
    async def main() -> None:
        async with Vairified(api_key="vair_pk_xxx") as client:
-           member = await client.members.get("vair_mem_xxx")
+           member = await client.members.get("4873327")
            print(member.name, "rated", member.rating_for("pickleball"))
 
            async for m in client.members.search(city="Austin", max_results=5):

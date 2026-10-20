@@ -5,7 +5,7 @@ Usage::
 
     async with Vairified(api_key="vair_pk_xxx") as client:
         # Get a connected member
-        member = await client.members.get("vair_mem_xxx")
+        member = await client.members.get("4873327")
         print(member.display_name, member.rating_for("pickleball"))
 
         # Auto-paginate a search
@@ -46,17 +46,26 @@ from __future__ import annotations
 
 import os
 import re
+import warnings
 from collections.abc import AsyncIterator, Sequence
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
 
 from vairified.errors import (
     AuthenticationError,
     NotFoundError,
+    PermissionDeniedError,
     RateLimitError,
+    ScoreEntryPausedError,
+    ServiceUnavailableError,
     VairifiedError,
     ValidationError,
+)
+from vairified.leaderboard_category import (
+    LeaderboardCategory,
+    LeaderboardCategoryInfo,
+    LeaderboardCategoryLabel,
 )
 from vairified.models import (
     AttributionResult,
@@ -77,6 +86,7 @@ from vairified.oauth import (
     OAuthScope,
     TokenResponse,
 )
+from vairified.partner_search_sort import PartnerSearchSortField
 
 if TYPE_CHECKING:
     from typing import Self
@@ -250,15 +260,42 @@ def _raise_from_response(response: httpx.Response) -> None:
 
     if status == 401:
         raise AuthenticationError(message, response=body)
+    if status == 403:
+        raise PermissionDeniedError(message, response=body)
     if status == 404:
         raise NotFoundError(message, response=body)
     if status == 429:
-        retry_after_hdr = response.headers.get("Retry-After")
-        retry_after = int(retry_after_hdr) if retry_after_hdr else None
+        retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
         raise RateLimitError(message, retry_after=retry_after, response=body)
     if status == 400:
         raise ValidationError(message, response=body)
+    if status == 503:
+        # The header wins; the body's ``retryAfter`` covers a proxy that strips it.
+        body_dict = body if isinstance(body, dict) else {}
+        retry_after = _parse_retry_after_seconds(response.headers.get("Retry-After"))
+        if retry_after is None:
+            retry_after = _parse_retry_after_seconds(body_dict.get("retryAfter"))
+        codes = (body_dict.get("code"), body_dict.get("error"))
+        if ScoreEntryPausedError.code in codes:
+            raise ScoreEntryPausedError(message, retry_after=retry_after, response=body)
+        raise ServiceUnavailableError(message, retry_after=retry_after, response=body)
     raise VairifiedError(message, status_code=status, response=body)
+
+
+def _parse_retry_after_seconds(value: object) -> int | None:
+    """
+    Read a ``Retry-After`` value as whole seconds.
+
+    Only the delta-seconds form is understood (what the API sends); an HTTP
+    date, a negative or a garbage value yields ``None`` rather than a wait the
+    caller cannot trust.
+    """
+    if value is None or isinstance(value, bool):
+        return None
+    text = str(value).strip()
+    if not text.isascii() or not text.isdigit():
+        return None
+    return int(text)
 
 
 # ---------------------------------------------------------------------------
@@ -291,31 +328,33 @@ class MembersResource(_Resource):
         sport: str | list[str] | None = None,
     ) -> Member:
         """
-        Get a connected member by external ID.
+        Get a connected member by member id.
 
         **Requires an active OAuth connection** between your partner app
         and the player. Use the OAuth flow on ``client.oauth`` first.
 
-        :param player_id: External player ID in ``vair_mem_xxx`` format.
+        :param player_id: The player's numeric member id, as a string (e.g.
+            ``"4873327"``) -- the only id the Partner API uses.
         :param sport: Optional sport filter. Pass a single sport code to
             get ratings for just that sport, or a list to get multiple.
             When omitted, the response contains every sport the player
             has ratings in.
-        :raises NotFoundError: If the external ID is invalid or unknown.
-        :raises VairifiedError: If the player has not connected to your app
-            (403) or if the API request otherwise fails.
+        :raises NotFoundError: If the member id is invalid or unknown.
+        :raises PermissionDeniedError: If the player has not connected to your
+            app (403).
+        :raises VairifiedError: If the API request otherwise fails.
 
         Example::
 
-            member = await client.members.get("vair_mem_xxx")
+            member = await client.members.get("4873327")
             print(member.display_name, member.rating_for("pickleball"))
 
             # Just pickleball
-            member = await client.members.get("vair_mem_xxx", sport="pickleball")
+            member = await client.members.get("4873327", sport="pickleball")
 
             # Multiple sports
             member = await client.members.get(
-                "vair_mem_xxx",
+                "4873327",
                 sport=["pickleball", "padel"],
             )
         """
@@ -344,8 +383,8 @@ class MembersResource(_Resource):
         age: int | None = None,
         age_min: int | None = None,
         age_max: int | None = None,
-        sort_by: str | None = None,
-        sort_order: str = "desc",
+        sort_by: PartnerSearchSortField | None = None,
+        sort_order: Literal["asc", "desc"] | None = None,
         page_size: int = _DEFAULT_SEARCH_LIMIT,
         max_results: int | None = None,
     ) -> AsyncIterator[Member]:
@@ -379,8 +418,13 @@ class MembersResource(_Resource):
         :param age: Exact age filter.
         :param age_min: Lower age bound.
         :param age_max: Upper age bound.
-        :param sort_by: Field to sort by.
-        :param sort_order: ``"asc"`` or ``"desc"``.
+        :param sort_by: Field to sort by, sent as ``sortField``: one of
+            ``"lastName"``, ``"firstName"``, ``"memberId"``, ``"city"``,
+            ``"state"``, ``"country"``. Omitted: last name, ascending. Any
+            other value is refused by the API with a 400
+            (:class:`ValidationError`).
+        :param sort_order: ``"asc"`` or ``"desc"``, sent as ``sortDirection``
+            only when set. Omitted: the API's default, ascending.
         :param page_size: Results per HTTP request. Server cap is 100.
         :param max_results: Optional cap on total results to iterate.
         """
@@ -611,6 +655,10 @@ class MatchesResource(_Resource):
 
         Set ``batch.dry_run = True`` to validate without persisting.
 
+        :raises ScoreEntryPausedError: (HTTP 503) while Vairified has paused
+            score entry for maintenance. Nothing was saved; resubmit after
+            ``err.retry_after`` seconds. The SDK does not retry for you.
+
         Example::
 
             batch = MatchBatch(
@@ -623,8 +671,8 @@ class MatchesResource(_Resource):
                 matches=[
                     Match(
                         identifier="m1",
-                        teams=[["vair_mem_aaa", "vair_mem_bbb"],
-                               ["vair_mem_ccc", "vair_mem_ddd"]],
+                        teams=[["4873327", "4873328"],
+                               ["4873329", "4873330"]],
                         games=[Game(scores=[11, 8]), Game(scores=[11, 5])],
                     ),
                 ],
@@ -654,6 +702,9 @@ class MatchesResource(_Resource):
             ``teamA``, ``teamB``).
         :returns: :class:`TournamentImportResult` with counts.
         :raises ValidationError: If the payload is malformed.
+        :raises ScoreEntryPausedError: (HTTP 503) while score entry is paused
+            for maintenance. Nothing was imported; resubmit after
+            ``err.retry_after`` seconds.
 
         Example::
 
@@ -783,41 +834,88 @@ class OAuthResource(_Resource):
 
 
 class LeaderboardResource(_Resource):
-    """Read-only leaderboard queries."""
+    """
+    Read-only leaderboard queries.
+
+    Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
+    players verified in the sport; the recreational boards (``recreational`` /
+    RD, ``recreational_singles`` / RS) rank every player. Rank and percentile are
+    scoped to the sport. ``category`` takes a :class:`LeaderboardCategory` code
+    or one of its labels (``"VS"``, ``"RD"``, any case).
+
+    :meth:`list` and :meth:`categories` / :meth:`category_list` are public
+    routes, but the SDK always sends your key, and a key that is sent is
+    checked: an invalid or revoked key raises :class:`AuthenticationError`
+    (401), a key without ``leaderboard:read`` raises
+    :class:`PermissionDeniedError` (403).
+    """
+
+    @staticmethod
+    def _warn_ignored(option: str, route: str) -> None:
+        """Warn that a deprecated option was accepted but not sent."""
+        warnings.warn(
+            f"{option} is deprecated and ignored: {route} does not accept it (the "
+            "API would refuse the request with a 400). It will be removed in a "
+            "future release.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     async def list(
         self,
         *,
-        category: str | None = None,
+        sport_code: str | None = None,
+        category: LeaderboardCategory | LeaderboardCategoryLabel | str | None = None,
         age_bracket: str | None = None,
         scope: str | None = None,
         state: str | None = None,
         city: str | None = None,
         club_id: str | None = None,
         gender: str | None = None,
-        verified_only: bool = False,
+        verified_only: bool | None = None,
         min_games: int | None = None,
         limit: int = 50,
         offset: int = 0,
         search: str | None = None,
     ) -> dict[str, Any]:
-        """Fetch a leaderboard page with optional filters."""
+        """
+        Fetch a leaderboard page with optional filters.
+
+        The query keys are exactly the API's ``LeaderboardQueryDto`` fields --
+        the API refuses any other key with a 400.
+
+        :param sport_code: Sport code (``"pickleball"``, ``"padel"``), sent as
+            ``sportCode``. Rank and percentile are per sport.
+        :param verified_only: Optional narrowing filter, sent as
+            ``verifiedOnly`` only when set. ``True`` lists only players
+            VAIRified in the sport; ``False`` or ``None`` applies no filter.
+            (Before 0.9.0 the API read an unset or ``False`` value as
+            "unverified players only".) Verified boards list only verified
+            players whatever this says.
+        :param club_id: **Deprecated.** The API has no club filter here;
+            accepted for compatibility, never sent, and raises a
+            :class:`DeprecationWarning`.
+        """
+        if club_id is not None:
+            self._warn_ignored("club_id", "GET /leaderboard")
         params: dict[str, Any] = {"limit": limit, "offset": offset}
         for key, value in (
+            ("sportCode", sport_code),
             ("category", category),
             ("ageBracket", age_bracket),
             ("scope", scope),
             ("state", state),
             ("city", city),
-            ("clubId", club_id),
             ("gender", gender),
             ("minGames", min_games),
             ("search", search),
         ):
             if value is not None:
                 params[key] = value
-        if verified_only:
-            params["verifiedOnly"] = True
+        # Sent only when the caller sets it: True narrows to VAIRified players,
+        # False or absent is no filter.
+        if verified_only is not None:
+            params["verifiedOnly"] = verified_only
         data = await self._client._request("GET", "/leaderboard", params=params)
         return data or {}
 
@@ -825,7 +923,9 @@ class LeaderboardResource(_Resource):
         self,
         player_id: str,
         *,
-        category: str = "doubles",
+        sport_code: str | None = None,
+        # "overall" is the API's default track; the old "doubles" code was retired.
+        category: LeaderboardCategory | LeaderboardCategoryLabel | str = "overall",
         age_bracket: str = "open",
         scope: str = "global",
         state: str | None = None,
@@ -833,27 +933,67 @@ class LeaderboardResource(_Resource):
         club_id: str | None = None,
         context_size: int = 5,
     ) -> dict[str, Any]:
-        """Fetch a specific player's rank + nearby players."""
+        """
+        Fetch a specific player's rank + nearby players.
+
+        The body keys are exactly the API's ``PlayerRankQueryDto`` fields -- the
+        API refuses any other key with a 400, which is why ``context_size`` goes
+        out as ``context``.
+
+        :param player_id: The player's member id (canonical, e.g.
+            ``"4873327"``), their UUID, or ``"@username"``. Anything else is a
+            404 (:class:`NotFoundError`).
+        :param sport_code: Sport code, sent as ``sportCode``. Rank and
+            percentile are per sport.
+        :param context_size: Players on either side of the target (0-25), sent
+            as ``context``.
+        :param city: **Deprecated.** The rank route has no city filter;
+            accepted, never sent, and raises a :class:`DeprecationWarning`.
+        :param club_id: **Deprecated.** The rank route has no club filter;
+            accepted, never sent, and raises a :class:`DeprecationWarning`.
+        """
+        if city is not None:
+            self._warn_ignored("city", "POST /leaderboard/rank")
+        if club_id is not None:
+            self._warn_ignored("club_id", "POST /leaderboard/rank")
         body: dict[str, Any] = {
             "playerId": player_id,
             "category": category,
             "ageBracket": age_bracket,
             "scope": scope,
-            "contextSize": context_size,
+            "context": context_size,
         }
+        if sport_code is not None:
+            body["sportCode"] = sport_code
         if state:
             body["state"] = state
-        if city:
-            body["city"] = city
-        if club_id:
-            body["clubId"] = club_id
         data = await self._client._request("POST", "/leaderboard/rank", json=body)
         return data or {}
 
     async def categories(self) -> dict[str, Any]:
-        """List available leaderboard categories, brackets, and scopes."""
+        """
+        List available leaderboard categories, brackets, scopes, and rating
+        tiers -- the raw ``GET /leaderboard/categories`` body. For the
+        categories as typed models, use :meth:`category_list`.
+        """
         data = await self._client._request("GET", "/leaderboard/categories")
         return data or {}
+
+    async def category_list(self) -> list[LeaderboardCategoryInfo]:
+        """
+        The leaderboard tracks as :class:`LeaderboardCategoryInfo` models --
+        code, name, web label, and whether the board is verified-only.
+
+        Example::
+
+            for track in await client.leaderboard.category_list():
+                print(track.code, track.label, track.verified_only)  # singles VS True
+        """
+        data = await self.categories()
+        entries = data.get("categories")
+        if not isinstance(entries, list):
+            return []
+        return [LeaderboardCategoryInfo.model_validate(entry) for entry in entries]
 
 
 class WebhooksResource(_Resource):
