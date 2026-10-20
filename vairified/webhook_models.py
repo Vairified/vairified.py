@@ -127,7 +127,7 @@ class RatingUpdatedSport(BaseModel):
     rating: float | None = None
     abbr: str | None = None
     label: str | None = None
-    """The web app's label for the primary rating (``VO``, ``R``, ...)."""
+    """The web app's label for the primary rating (``VO``, ``RD``, ...)."""
     rating_splits: dict[str, Any] | None = Field(default=None, alias="ratingSplits")
     """Split key -> ``{"rating", "abbr", "label"}``, unvalidated. Since the
     rating-tracks release this includes ``recreational_singles-*`` keys, and the

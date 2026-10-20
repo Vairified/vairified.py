@@ -124,7 +124,7 @@ sports you requested via the ``sport=`` query filter.
 
 Verified-track splits (``overall-*``, ``gender-*``, ``mixed-*``, ``singles-*``)
 are sent only for a player verified in that sport. For anyone else they are
-absent and the primary rating is the recreational chain (``R``); a
+absent and the primary rating is the recreational chain (``RD``); a
 sport with nothing visible is left out of ``member.sport`` entirely.
 
 ``SportRating`` is dict-like
@@ -558,18 +558,18 @@ Read-only leaderboard queries live on ``client.leaderboard``:
 
    # The recreational board ranks everyone; verified_only=True narrows it to
    # VAIRified players. Unset (or False) applies no filter.
-   rec_verified = await client.leaderboard.list(category="R", verified_only=True)
+   rec_verified = await client.leaderboard.list(category="RD", verified_only=True)
 
    # The six tracks as typed models
    for track in await client.leaderboard.category_list():
        print(track.code, track.label, track.name, track.verified_only)
-       # recreational R Recreational False
+       # recreational RD Recreational Doubles False
 
    # Discover valid category / bracket / scope values (raw body)
    categories = await client.leaderboard.categories()
 
 Verified boards (``overall``, ``gender``, ``mixed``, ``singles``) list only
-players verified in the sport; the recreational boards (``R``, ``RS``) rank
+players verified in the sport; the recreational boards (``RD``, ``RS``) rank
 every player. ``verified_only`` is sent only when you set it: ``True`` lists
 only VAIRified players, unset or ``False`` applies no filter. Rank and
 percentile are scoped to the sport. The
