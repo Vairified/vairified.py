@@ -2,9 +2,9 @@
 Partner event models -- the event catalogue, and a partner's own listings.
 
 Read side (``client.events.list`` / ``get`` / ``members``) and write side
-(``client.events.submit`` / ``withdraw``). Kept out of :mod:`vairified.models`,
-which is already large, the same way the webhook event models live in
-:mod:`vairified.webhook_models`.
+(``client.events.submit`` / ``withdraw`` / ``set_members``). Kept out of
+:mod:`vairified.models`, which is already large, the same way the webhook event
+models live in :mod:`vairified.webhook_models`.
 
 Response models are frozen and tolerate new server-side fields, exactly like
 every other response model in this package. The request models forbid unknown
@@ -179,25 +179,63 @@ class EventsPage(BaseModel):
 
 
 class EventMember(BaseModel):
-    """One enrolled player on an event's roster."""
+    """
+    One enrolled player on an event's roster.
+
+    :rotating_light: **On one of YOUR OWN listings a row can carry the member
+    number and status only.** A member who disconnected your app, or who never
+    allowed you their profile (and was not listed by a TRUSTED app), comes back
+    with ``member_id``, ``enrollment_status``, ``is_paid``, ``source`` and
+    ``lapsed`` and nothing else, so ``first_name``, ``last_name``,
+    ``is_vairified`` and ``is_vair_plus`` are ``None`` there. ``None`` means
+    "not shared with you", never "no" -- do not read a missing ``is_vair_plus``
+    as "does not hold VAIR+". On every other event every field is present.
+    """
 
     model_config = _RESPONSE_CONFIG
 
     member_id: int = Field(alias="memberId")
-    first_name: str = Field(alias="firstName")
-    last_name: str = Field(alias="lastName")
+    first_name: str | None = Field(default=None, alias="firstName")
+    """``None`` on your own listing when the member has not shared their profile."""
+    last_name: str | None = Field(default=None, alias="lastName")
+    """``None`` under the same conditions as :attr:`first_name`."""
     rating: float | None = None
-    """Overall-open rating in the event's sport, truncated to 3 decimals."""
-    is_vairified: bool = Field(alias="isVairified")
-    is_vair_plus: bool = Field(alias="isVairPlus")
+    """
+    Overall-open rating in the event's sport, truncated to 3 decimals. ``None``
+    when the player has no rating yet, or has not shared it with you.
+    """
+    is_vairified: bool | None = Field(default=None, alias="isVairified")
+    """
+    Whether the player has completed VAIRification. ``None`` under the same
+    conditions as :attr:`first_name`.
+    """
+    is_vair_plus: bool | None = Field(default=None, alias="isVairPlus")
     """
     A **paid VAIR+ membership** -- check it when your event requires VAIR+. Not
     :attr:`is_paid`, which is this event's entry fee; the two are independent.
+    ``None`` under the same conditions as :attr:`first_name`.
     """
     enrollment_status: str = Field(alias="enrollmentStatus")
-    """``PENDING``, ``CONFIRMED``, ``COMPLETED`` or ``CANCELLED``."""
+    """
+    ``PENDING``, ``CONFIRMED``, ``COMPLETED`` or ``CANCELLED``. On your own
+    listing ``PENDING`` means the member signed up on Vairified and is **waiting
+    for you**: include them in :meth:`EventsResource.set_members` to confirm
+    them. ``CONFIRMED`` means your list confirmed them.
+    """
     is_paid: bool = Field(alias="isPaid")
     """Whether the player paid for their slot on THIS event."""
+    source: str | None = None
+    """
+    Your own listings only: where the sign-up came from. ``PARTNER_LIST`` is
+    your list, ``VAIR_SIGNUP`` the member registered on Vairified, ``STAFF_ADD``
+    Vairified staff registered them. ``None`` on every other event.
+    """
+    lapsed: bool | None = None
+    """
+    Your own listings only: ``True`` when the member was still waiting for you
+    when the event started. A lapsed sign-up never counts as attended; send the
+    member in your list to confirm them anyway, if they belong on it.
+    """
 
 
 class EventMembers(BaseModel):
@@ -209,6 +247,73 @@ class EventMembers(BaseModel):
     sport: str
     """Each member's ``rating`` is their rating in this sport."""
     members: list[EventMember] = Field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Your listing's confirmed members (set_members)
+# ---------------------------------------------------------------------------
+
+
+class EventRosterRefusal(BaseModel):
+    """One member number :meth:`EventsResource.set_members` did not apply."""
+
+    model_config = _RESPONSE_CONFIG
+
+    member_id: int = Field(alias="memberId")
+    reason: str
+    """
+    Why the number was not applied:
+
+    * ``UNKNOWN_MEMBER`` -- no Vairified member has this number. Also the answer
+      for a number staff merged into another account, or whose member is
+      deleting their account; that person's place on the listing is left as it
+      was, neither confirmed nor cancelled.
+    * ``NO_EVENTS_PERMISSION`` -- the member has not given your app the events
+      permission (``user:event:register``), is not a player your app created,
+      and holds no current Vairified sign-up on this listing.
+    * ``DISCONNECTED`` -- the member disconnected your app (a TRUSTED app
+      included) and holds no current Vairified sign-up on this listing. They can
+      be listed again once they reconnect.
+
+    A plain ``str`` rather than a closed ``Literal``, like every other
+    enum-shaped response field here, so a reason the API adds later is handed
+    over instead of failing the whole response.
+    """
+    message: str
+    """A sentence saying the same thing, for your logs or your staff."""
+
+
+class EventRosterResult(BaseModel):
+    """
+    Result of :meth:`EventsResource.set_members`.
+
+    Every member on your list who is not in :attr:`refused` was applied, and
+    the four counts say how.
+    """
+
+    model_config = _RESPONSE_CONFIG
+
+    partner_event_id: str = Field(alias="partnerEventId")
+    """The identifier you supplied, echoed back."""
+    event_id: int = Field(alias="eventId")
+    """Vairified's integer id for the listing."""
+    added: int
+    """Members newly confirmed by this list."""
+    confirmed: int
+    """Members who had signed up on Vairified and are now confirmed by this list."""
+    unchanged: int
+    """Members already confirmed; nothing changed."""
+    removed: int
+    """Confirmed members this list left off, now cancelled by you."""
+    refused: list[EventRosterRefusal]
+    """Members not applied, each with its reason."""
+
+    def __repr__(self) -> str:  # pragma: no cover
+        return (
+            f"<EventRosterResult {self.partner_event_id!r} #{self.event_id} "
+            f"+{self.added} ~{self.confirmed} ={self.unchanged} -{self.removed} "
+            f"refused={len(self.refused)}>"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -287,6 +392,7 @@ class EventSubmission(BaseModel):
             type="TOURNAMENT",
             registration_url="https://example.com/register/autumn-doubles",
             start_date=datetime(2026, 11, 14, 14, 0, tzinfo=timezone.utc),
+            end_date=datetime(2026, 11, 15, 22, 0, tzinfo=timezone.utc),
             max_spots=128,
             location=EventSubmissionLocation(city="Austin", state="TX"),
         )
@@ -313,17 +419,19 @@ class EventSubmission(BaseModel):
     """Where a player registers (http or https). Nothing is paid on Vairified."""
     start_date: datetime | str = Field(alias="startDate")
     """Required, and it cannot be cleared."""
+    end_date: datetime | str = Field(alias="endDate")
+    """
+    Required on every submission, after ``start_date``, and it cannot be
+    cleared; a submission without it is refused with a 400 saying the end date
+    is required. An event whose end has passed can no longer be submitted or
+    updated, only withdrawn.
+    """
 
     # ---- Optional: omitted keeps the stored value, None clears it ----
 
     status: str | None = None
     """``UPCOMING`` lists the event (and un-cancels it); ``CANCELLED`` cancels it."""
     description: str | None = None
-    end_date: datetime | str | None = Field(default=None, alias="endDate")
-    """
-    An event whose end has passed can no longer be submitted or updated, only
-    withdrawn. With no end date that is 24 hours after its start.
-    """
     registration_deadline: datetime | str | None = Field(
         default=None, alias="registrationDeadline"
     )
@@ -425,6 +533,8 @@ __all__ = [
     "EventLocation",
     "EventMember",
     "EventMembers",
+    "EventRosterRefusal",
+    "EventRosterResult",
     "EventSubmission",
     "EventSubmissionLocation",
     "EventsPage",

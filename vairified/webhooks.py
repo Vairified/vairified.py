@@ -27,6 +27,7 @@ from .errors import WebhookSignatureError
 from .webhook_models import (
     ConnectionRevokedEvent,
     EventCreatedEvent,
+    EventRegistrationEvent,
     MemberStatusEvent,
     RatingUpdatedEvent,
     UnknownWebhookEvent,
@@ -40,6 +41,7 @@ __all__ = [
     "is_newer_sequence",
     "is_connection_revoked_event",
     "is_event_created_event",
+    "is_event_registration_event",
     "is_member_status_event",
     "is_rating_updated_event",
     "verify_webhook",
@@ -71,6 +73,7 @@ _EVENT_MODELS: dict[str, type] = {
     "connection.revoked": ConnectionRevokedEvent,
     "rating.updated": RatingUpdatedEvent,
     "event.created": EventCreatedEvent,
+    "event.registration": EventRegistrationEvent,
 }
 
 
@@ -376,6 +379,19 @@ def is_event_created_event(event: VerifiedWebhookEvent) -> TypeGuard[EventCreate
     ``data``'s.
     """
     return isinstance(event, EventCreatedEvent)
+
+
+def is_event_registration_event(
+    event: VerifiedWebhookEvent,
+) -> TypeGuard[EventRegistrationEvent]:
+    """Narrow a verified event to ``event.registration``.
+
+    :rotating_light: ``data.event_id`` is your listing's **int** event number and
+    is not the envelope's string ``event_id``. Deduplicate on the envelope's.
+    ``data.action`` and ``data.source`` are open sets; never branch on them
+    exhaustively.
+    """
+    return isinstance(event, EventRegistrationEvent)
 
 
 # ---------------------------------------------------------------------------

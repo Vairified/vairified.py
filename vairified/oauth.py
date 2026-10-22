@@ -20,6 +20,7 @@ OAuthScope = Literal[
     "user:rating:history",
     "user:match:submit",
     "user:webhook:subscribe",
+    "user:event:register",
 ]
 
 # Available OAuth scopes
@@ -30,6 +31,10 @@ SCOPES: dict[str, str] = {
     "user:rating:history": "View your complete rating history",
     "user:match:submit": "Submit match results on your behalf",
     "user:webhook:subscribe": "Receive notifications when your rating changes",
+    "user:event:register": (
+        "Show you as registered for this partner's events on VAIR, and tell the "
+        "partner when you sign up for or cancel one of its events on VAIR"
+    ),
 }
 
 # Default scopes requested

@@ -38,6 +38,8 @@ __all__ = [
     "EventCreatedClub",
     "EventCreatedEvent",
     "EventCreatedEventData",
+    "EventRegistrationEvent",
+    "EventRegistrationEventData",
     "MemberStatusEvent",
     "MemberStatusEventData",
     "MemberStatusEventSport",
@@ -348,6 +350,83 @@ class EventCreatedEvent(WebhookEventEnvelope):
     data: EventCreatedEventData
 
 
+class EventRegistrationEventData(BaseModel):
+    """The ``data`` block of an ``event.registration`` delivery.
+
+    Sent to the partner app that owns a listing when a player signs up for that
+    listing on Vairified, or a VAIR sign-up there is cancelled: by the player,
+    by Vairified staff, or by the player deleting their Vairified account.
+    Nothing your own app did is sent back to you -- your own member list
+    (:meth:`vairified.events.EventsResource.set_members`) and your own
+    withdrawal send nothing.
+
+    :rotating_light: **:attr:`event_id` here is an INT and is not the envelope's
+    :attr:`WebhookEventEnvelope.event_id`**, exactly as on ``event.created``:
+    the envelope's is the delivery's own string id, used for deduplication; this
+    one is your listing's Vairified event number.
+
+    **Only the envelope is validated**, as on ``event.created``: every field
+    here is handed over as it arrived. A missed delivery is recovered by reading
+    the listing's roster back (:meth:`vairified.events.EventsResource.members`),
+    which shows every VAIR sign-up waiting for you; there is no replay endpoint.
+    Never carries an email address or a phone number.
+    """
+
+    model_config = _EVENT_CONFIG
+
+    event_id: Any = Field(default=None, alias="eventId")
+    """``int``. The Vairified event number of your listing."""
+    partner_event_id: Any = Field(default=None, alias="partnerEventId")
+    """``str``, or ``None``. Your own id for the listing, as you sent it."""
+    member_id: Any = Field(default=None, alias="memberId")
+    """``int``. The member's Vairified member number."""
+    action: Any = None
+    """``"signed_up"`` or ``"cancelled"`` today. Deliberately not a ``Literal``.
+
+    ``signed_up``: the member asked for a place on Vairified; it is pending
+    until your member list names them. ``cancelled``: a pending place was taken
+    back on Vairified, or the member deleted their Vairified account, which ends
+    their places on your listings that had not finished, confirmed ones
+    included.
+    """
+    source: Any = None
+    """``"player"`` (the member, including deleting their account) or
+    ``"staff"`` (Vairified staff, on the member's behalf) today. Deliberately not
+    a ``Literal``."""
+    changed_at: Any = Field(default=None, alias="changedAt")
+    """``str``, ISO 8601. When it happened."""
+    first_name: Any = Field(default=None, alias="firstName")
+    """``str``. Present when the member allowed you their profile
+    (``user:profile:read``), your app is TRUSTED, the member is a placeholder
+    your app created, or Vairified staff registered a member who never connected
+    to you. ``None`` for a member who disconnected your app: from then on you
+    receive their member number only."""
+    last_name: Any = Field(default=None, alias="lastName")
+    """``str``. As :attr:`first_name`."""
+    is_vairified: Any = Field(default=None, alias="isVairified")
+    """``bool``. Whether the member holds a verified rating. With the profile
+    only; ``None`` means "not shared", never "no"."""
+    is_vair_plus: Any = Field(default=None, alias="isVairPlus")
+    """``bool``. Whether the member holds VAIR+ now. With the profile only;
+    ``None`` means "not shared", never "no"."""
+    rating: Any = None
+    """``float``. The member's rating in the listing's sport, when the member
+    allowed it (``user:rating:read``), your app is TRUSTED, or the member is
+    your own placeholder."""
+
+
+class EventRegistrationEvent(WebhookEventEnvelope):
+    """An ``event.registration`` delivery.
+
+    Delivery is at-least-once: deduplicate on the envelope's
+    :attr:`~WebhookEventEnvelope.event_id`. A member who signs up, cancels and
+    signs up again is three notices with three ids.
+    """
+
+    event: Literal["event.registration"]
+    data: EventRegistrationEventData
+
+
 class UnknownWebhookEvent(WebhookEventEnvelope):
     """Any event this SDK version does not model richly.
 
@@ -365,6 +444,7 @@ VerifiedWebhookEvent = (
     | ConnectionRevokedEvent
     | RatingUpdatedEvent
     | EventCreatedEvent
+    | EventRegistrationEvent
     | UnknownWebhookEvent
 )
 """A verified webhook event.

@@ -6,7 +6,8 @@ Two scopes, held separately:
 * ``key:event:read`` lists the catalogue and reads any public event and its
   roster.
 * ``key:event:submit`` lists, updates, cancels and withdraws YOUR OWN events in
-  Vairified's events directory. ``key:write`` and ``key:admin`` do not imply it.
+  Vairified's events directory, and sends each listing's confirmed members.
+  ``key:write`` and ``key:admin`` do not imply it.
   A key holding only this scope can still read back its own listings --
   ``list(mine=True)``, and ``get`` / ``members`` on its own event ids -- so it
   can reconcile what it listed.
@@ -17,6 +18,7 @@ large; reached as ``client.events`` exactly like every other sub-resource.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
@@ -24,6 +26,7 @@ from urllib.parse import quote
 from vairified.errors import ValidationError
 from vairified.event_models import (
     EventMembers,
+    EventRosterResult,
     EventsPage,
     EventSubmission,
     PartnerEvent,
@@ -56,7 +59,8 @@ def _zoned_param(value: datetime | str, name: str) -> str:
 
 class EventsResource:
     """
-    Event catalogue reads, and submitting or withdrawing your own listings.
+    Event catalogue reads; submitting or withdrawing your own listings, and
+    sending their confirmed members.
 
     Errors map onto the SDK's usual exceptions: a 400 is a
     :class:`~vairified.errors.ValidationError`, a 404 a
@@ -178,8 +182,17 @@ class EventsResource:
 
         Cancelled enrollments and deleted players are excluded. Each member's
         ``rating`` is their overall-open rating in the event's sport.
-        Vairified takes no sign-ups on partner listings, so the roster of one
-        of your own listings is empty today.
+
+        **Your own listings.** The roster of a listing your app submitted is
+        readable by your app only; to any other app it is a 404. It includes
+        members who signed up on Vairified and are **waiting for you**
+        (``enrollment_status="PENDING"``), with ``source`` and ``lapsed`` on
+        every row: send them in :meth:`set_members` to confirm them. This read
+        is also how you recover an ``event.registration`` notice you missed. A
+        member who has not shared their profile with you, or who disconnected
+        your app, comes back with their member number and status only, so
+        ``first_name``, ``last_name``, ``is_vairified`` and ``is_vair_plus`` can
+        be ``None``.
 
         :param event_id: The integer event id.
         :raises NotFoundError: Under the same conditions as :meth:`get`.
@@ -205,14 +218,16 @@ class EventsResource:
         out to keep its current value, set it to ``None`` to clear it.
 
         Cancel with ``status="CANCELLED"``; ``status="UPCOMING"`` lists it again.
-        An event whose end has passed can no longer be submitted or updated.
+        ``end_date`` is required on every submission, like ``start_date``. An
+        event whose end has passed can no longer be submitted or updated.
 
         Requires ``key:event:submit`` and an API key linked to your partner app.
 
         :returns: A :class:`~vairified.event_models.SubmittedEvent`; ``created``
             says whether this call created the listing or updated one.
-        :raises ValidationError: 400 -- a field the API refuses, an unknown
-            ``sport_code``, or an event that has already finished.
+        :raises ValidationError: 400 -- a field the API refuses (a missing
+            ``end_date`` included), an unknown ``sport_code``, or an event that
+            has already finished.
         :raises VairifiedError: 403 when the key lacks ``key:event:submit``, is
             not linked to a partner app, or the listing was removed by
             Vairified (contact Vairified; re-sending will not restore it).
@@ -228,6 +243,7 @@ class EventsResource:
                     type="TOURNAMENT",
                     registration_url="https://example.com/register/autumn",
                     start_date=datetime(2026, 11, 14, 14, tzinfo=timezone.utc),
+                    end_date=datetime(2026, 11, 15, 22, tzinfo=timezone.utc),
                 )
             )
             print(result.event_id, "created" if result.created else "updated")
@@ -257,6 +273,62 @@ class EventsResource:
             "DELETE", f"/partner/events/{quote(partner_event_id, safe='')}"
         )
         return WithdrawnEvent.model_validate(data)
+
+    async def set_members(
+        self, partner_event_id: str, member_ids: Iterable[int]
+    ) -> EventRosterResult:
+        """
+        Send the WHOLE confirmed list for one of your listings, by Vairified
+        member number. Send it whenever your roster changes; the listing's
+        Vairified page then shows these members as going.
+
+        **The whole list, every time.** A member confirmed before and missing
+        now is cancelled (their Vairified page shows it as cancelled by your
+        app, and they can register again). An empty list clears the roster.
+        Sending the same list again changes nothing. A list longer than the
+        listing's capacity is accepted. At most 2,000 member numbers; repeated
+        numbers count once.
+
+        **Members who signed up on Vairified** and are waiting for you
+        (``PENDING`` in :meth:`members`) are confirmed when your list includes
+        them, and left waiting when it does not.
+
+        **Who you may list:** a member who gave your app the events permission
+        (``user:event:register``, asked for in your Connect link), a player your
+        app created, or anyone with a current Vairified sign-up on this listing.
+        A TRUSTED app may list any member who has not disconnected it. Anyone
+        else comes back in ``refused`` with its reason, and everyone else on the
+        list is still applied -- so check ``refused`` on every call.
+
+        No ``event.registration`` notice is sent for changes your own list
+        makes. Requires ``key:event:submit``.
+
+        :param partner_event_id: Your own id for the listing, as you submitted it.
+        :param member_ids: Every member confirmed on the listing.
+        :returns: An :class:`~vairified.event_models.EventRosterResult` with the
+            counts and every refused member number.
+        :raises ValidationError: 400 -- more than 2,000 numbers, or a value that
+            is not a whole member number.
+        :raises NotFoundError: You have no listing with that id.
+        :raises VairifiedError: 403 when the key lacks ``key:event:submit``, is
+            not linked to a partner app, or the listing was removed by
+            Vairified. 409 when the listing is withdrawn (submit it again first)
+            or cancelled.
+
+        Example::
+
+            result = await client.events.set_members(
+                "autumn-doubles-avon", [4873327, 4873330]
+            )
+            for refusal in result.refused:
+                print(refusal.member_id, refusal.reason, refusal.message)
+        """
+        data = await self._client._request(
+            "PUT",
+            f"/partner/events/{quote(partner_event_id, safe='')}/members",
+            json={"memberIds": list(member_ids)},
+        )
+        return EventRosterResult.model_validate(data)
 
 
 __all__ = ["EventsResource"]

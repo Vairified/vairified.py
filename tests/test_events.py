@@ -80,6 +80,7 @@ SUBMISSION_REQUIRED = {
     "type": "TOURNAMENT",
     "registration_url": "https://example.com/register/autumn",
     "start_date": "2026-11-14T09:00:00-05:00",
+    "end_date": "2026-11-15T17:00:00-05:00",
 }
 
 
@@ -412,6 +413,99 @@ class TestEventsMembers:
 
     @respx.mock
     @pytest.mark.asyncio
+    async def test_your_listing_roster_parses_a_number_only_row(
+        self, api_key, base_url
+    ):
+        """
+        On your own listing a member who disconnected your app, or never shared
+        their profile, comes back as member number and status only. One such
+        row must not fail the whole roster (review finding C AR-7), and the
+        absent profile fields read as None -- "not shared", never "no".
+        """
+        respx.get(f"{base_url}/partner/event/48213/members").mock(
+            return_value=Response(
+                200,
+                json={
+                    "eventId": 48213,
+                    "sport": "pickleball",
+                    "members": [
+                        {
+                            "memberId": 4873327,
+                            "firstName": "Mike",
+                            "lastName": "Barker",
+                            "rating": 3.915,
+                            "isVairified": True,
+                            "isVairPlus": True,
+                            "enrollmentStatus": "CONFIRMED",
+                            "isPaid": False,
+                            "source": "PARTNER_LIST",
+                            "lapsed": False,
+                        },
+                        {
+                            "memberId": 4873399,
+                            "enrollmentStatus": "PENDING",
+                            "isPaid": False,
+                            "source": "VAIR_SIGNUP",
+                            "lapsed": True,
+                        },
+                    ],
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            roster = await client.events.members(48213)
+
+        full, number_only = roster.members
+        assert full.source == "PARTNER_LIST"
+        assert full.lapsed is False
+        assert full.is_vair_plus is True
+        assert number_only.member_id == 4873399
+        assert number_only.enrollment_status == "PENDING"
+        assert number_only.source == "VAIR_SIGNUP"
+        assert number_only.lapsed is True
+        assert number_only.is_paid is False
+        assert (
+            number_only.first_name,
+            number_only.last_name,
+            number_only.is_vairified,
+            number_only.is_vair_plus,
+            number_only.rating,
+        ) == (None, None, None, None, None)
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_another_events_rows_carry_no_listing_fields(self, api_key, base_url):
+        respx.get(f"{base_url}/partner/event/12345/members").mock(
+            return_value=Response(
+                200,
+                json={
+                    "eventId": 12345,
+                    "sport": "pickleball",
+                    "members": [
+                        {
+                            "memberId": 1,
+                            "firstName": "A",
+                            "lastName": "B",
+                            "isVairified": False,
+                            "isVairPlus": False,
+                            "enrollmentStatus": "CONFIRMED",
+                            "isPaid": True,
+                        }
+                    ],
+                },
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            roster = await client.events.members(12345)
+
+        member = roster.members[0]
+        assert member.source is None
+        assert member.lapsed is None
+
+    @respx.mock
+    @pytest.mark.asyncio
     async def test_unknown_event_is_not_found(self, api_key, base_url):
         respx.get(f"{base_url}/partner/event/999/members").mock(
             return_value=_error(404, "Event 999 not found.")
@@ -463,6 +557,7 @@ class TestEventsSubmit:
             "type": "TOURNAMENT",
             "registrationUrl": "https://example.com/register/autumn",
             "startDate": "2026-11-14T09:00:00-05:00",
+            "endDate": "2026-11-15T17:00:00-05:00",
             "maxSpots": 100000,
             "maxTeams": 32,
             "logoUrl": "https://example.com/logo.png?v=2",
@@ -497,7 +592,7 @@ class TestEventsSubmit:
         body = json.loads(route.calls.last.request.content)
         assert body["logoUrl"] is None
         assert body["location"] is None
-        for untouched in ("description", "maxSpots", "extras", "endDate", "status"):
+        for untouched in ("description", "maxSpots", "extras", "status"):
             assert untouched not in body
 
     @respx.mock
@@ -516,8 +611,8 @@ class TestEventsSubmit:
                     **{
                         **SUBMISSION_REQUIRED,
                         "start_date": datetime(2026, 11, 14, 14, tzinfo=timezone.utc),
+                        "end_date": datetime(2026, 11, 15, 17, tzinfo=eastern),
                     },
-                    end_date=datetime(2026, 11, 15, 17, tzinfo=eastern),
                     status="CANCELLED",
                 )
             )
@@ -532,6 +627,56 @@ class TestEventsSubmit:
             EventSubmission(
                 **{**SUBMISSION_REQUIRED, "start_date": datetime(2026, 11, 14, 9)}
             )
+
+    def test_a_naive_end_date_is_refused_when_building(self):
+        with pytest.raises(ValueError, match="timezone-aware"):
+            EventSubmission(
+                **{**SUBMISSION_REQUIRED, "end_date": datetime(2026, 11, 15, 17)}
+            )
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_end_date_is_required_and_nothing_is_sent_without_it(
+        self, api_key, base_url
+    ):
+        """
+        A listing must carry an end date (Vairified#1320): the API refuses one
+        without it, so the submission refuses to be built rather than spending a
+        round trip on the same answer. ``None`` cannot clear it either.
+        """
+        route = respx.post(f"{base_url}/partner/events").mock(
+            return_value=Response(
+                200, json={"partnerEventId": "x", "eventId": 1, "created": True}
+            )
+        )
+        without = {k: v for k, v in SUBMISSION_REQUIRED.items() if k != "end_date"}
+
+        # pydantic names a missing field by its wire name and a wrong value by
+        # its Python name, so either spelling is the field.
+        with pytest.raises(ValueError, match="endDate|end_date"):
+            EventSubmission(**without)
+        with pytest.raises(ValueError, match="endDate|end_date"):
+            EventSubmission(**without, end_date=None)
+
+        assert not route.called
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_the_apis_end_date_refusal_is_a_validation_error(
+        self, api_key, base_url
+    ):
+        respx.post(f"{base_url}/partner/events").mock(
+            return_value=_error(
+                400, "endDate is required, and a listing's end date cannot be cleared."
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(ValidationError) as exc:
+                await client.events.submit(EventSubmission(**SUBMISSION_REQUIRED))
+
+        assert exc.value.status_code == 400
+        assert "endDate" in exc.value.message
 
     def test_a_misspelt_field_is_refused_when_building(self):
         with pytest.raises(ValueError, match="max_spot"):
@@ -666,5 +811,203 @@ class TestEventsWithdraw:
         async with Vairified(api_key=api_key, base_url=base_url) as client:
             with pytest.raises(VairifiedError) as exc:
                 await client.events.withdraw("x")
+
+        assert exc.value.status_code == 403
+
+
+# ---------------------------------------------------------------------------
+# set_members
+# ---------------------------------------------------------------------------
+
+
+def _roster_result(**overrides) -> dict:
+    return {
+        "partnerEventId": "autumn-doubles-avon",
+        "eventId": 48213,
+        "added": 0,
+        "confirmed": 0,
+        "unchanged": 0,
+        "removed": 0,
+        "refused": [],
+        **overrides,
+    }
+
+
+class TestEventsSetMembers:
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_puts_the_whole_list_and_returns_counts_and_refusals(
+        self, api_key, base_url
+    ):
+        route = respx.put(
+            f"{base_url}/partner/events/autumn-doubles-avon/members"
+        ).mock(
+            return_value=Response(
+                200,
+                json=_roster_result(
+                    added=3,
+                    confirmed=1,
+                    unchanged=20,
+                    removed=2,
+                    refused=[
+                        {
+                            "memberId": 4873399,
+                            "reason": "NO_EVENTS_PERMISSION",
+                            "message": (
+                                "This member hasn't given you the events permission."
+                            ),
+                        },
+                        {
+                            "memberId": 4873400,
+                            "reason": "DISCONNECTED",
+                            "message": (
+                                "This member has disconnected your app, and holds no "
+                                "current VAIR sign-up on this listing."
+                            ),
+                        },
+                        {
+                            "memberId": 9999999,
+                            "reason": "UNKNOWN_MEMBER",
+                            "message": "No VAIR member has this number.",
+                        },
+                    ],
+                ),
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.events.set_members(
+                "autumn-doubles-avon", [4873327, 4873330]
+            )
+
+        assert route.calls.last.request.method == "PUT"
+        assert json.loads(route.calls.last.request.content) == {
+            "memberIds": [4873327, 4873330]
+        }
+        assert result.partner_event_id == "autumn-doubles-avon"
+        assert result.event_id == 48213
+        assert (result.added, result.confirmed, result.unchanged, result.removed) == (
+            3,
+            1,
+            20,
+            2,
+        )
+        permission, disconnected, unknown = result.refused
+        assert (permission.member_id, permission.reason) == (
+            4873399,
+            "NO_EVENTS_PERMISSION",
+        )
+        assert (disconnected.member_id, disconnected.reason) == (
+            4873400,
+            "DISCONNECTED",
+        )
+        assert disconnected.message.startswith("This member has disconnected")
+        assert unknown.reason == "UNKNOWN_MEMBER"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_an_empty_list_is_sent_as_an_empty_list(self, api_key, base_url):
+        """An empty list clears the roster, so it must be sent, never dropped."""
+        route = respx.put(
+            f"{base_url}/partner/events/autumn-doubles-avon/members"
+        ).mock(return_value=Response(200, json=_roster_result(removed=4)))
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.events.set_members("autumn-doubles-avon", [])
+
+        assert json.loads(route.calls.last.request.content) == {"memberIds": []}
+        assert result.removed == 4
+        assert result.refused == []
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_any_iterable_of_numbers_is_sent_as_a_list(self, api_key, base_url):
+        route = respx.put(
+            f"{base_url}/partner/events/autumn-doubles-avon/members"
+        ).mock(return_value=Response(200, json=_roster_result(added=2)))
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            await client.events.set_members(
+                "autumn-doubles-avon", (n for n in (4873327, 4873330))
+            )
+
+        assert json.loads(route.calls.last.request.content) == {
+            "memberIds": [4873327, 4873330]
+        }
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_reason_this_version_does_not_know_is_handed_over(
+        self, api_key, base_url
+    ):
+        """A new refusal reason must not fail the whole response."""
+        respx.put(f"{base_url}/partner/events/x/members").mock(
+            return_value=Response(
+                200,
+                json=_roster_result(
+                    partnerEventId="x",
+                    refused=[
+                        {"memberId": 1, "reason": "SOMETHING_NEW", "message": "..."}
+                    ],
+                ),
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            result = await client.events.set_members("x", [1])
+
+        assert result.refused[0].reason == "SOMETHING_NEW"
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_the_id_is_escaped_as_one_path_segment(self, api_key, base_url):
+        route = respx.put(f"{base_url}/partner/events/a%2Fb/members").mock(
+            return_value=_error(404, "No listing found for 'a/b'.")
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(NotFoundError):
+                await client.events.set_members("a/b", [1])
+
+        assert route.called
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_over_the_cap_is_a_validation_error(self, api_key, base_url):
+        respx.put(f"{base_url}/partner/events/x/members").mock(
+            return_value=_error(400, "memberIds holds at most 2000 member numbers.")
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(ValidationError) as exc:
+                await client.events.set_members("x", list(range(1, 2002)))
+
+        assert "2000" in exc.value.message
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_withdrawn_listing_is_a_409(self, api_key, base_url):
+        respx.put(f"{base_url}/partner/events/x/members").mock(
+            return_value=_error(
+                409, "This listing is withdrawn; send the event again first."
+            )
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(VairifiedError) as exc:
+                await client.events.set_members("x", [1])
+
+        assert exc.value.status_code == 409
+
+    @respx.mock
+    @pytest.mark.asyncio
+    async def test_a_listing_vairified_removed_is_a_403(self, api_key, base_url):
+        respx.put(f"{base_url}/partner/events/x/members").mock(
+            return_value=_error(403, "That listing was removed by Vairified.")
+        )
+
+        async with Vairified(api_key=api_key, base_url=base_url) as client:
+            with pytest.raises(VairifiedError) as exc:
+                await client.events.set_members("x", [1])
 
         assert exc.value.status_code == 403
