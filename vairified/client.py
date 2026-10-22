@@ -38,7 +38,8 @@ Sub-resources:
 * :attr:`Vairified.matches` — submit batch, tournament_import
 * :attr:`Vairified.oauth` — OAuth authorization flow
 * :attr:`Vairified.leaderboard` — leaderboard queries
-* :attr:`Vairified.events` — event catalogue; submit/withdraw your own listings
+* :attr:`Vairified.events` — event catalogue; submit/withdraw your own listings,
+  read and set their members (``set_members``)
 * :attr:`Vairified.webhooks` — webhook delivery inspection
 * :attr:`Vairified.usage` — API usage stats (method: ``await client.usage()``)
 """

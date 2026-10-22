@@ -447,6 +447,7 @@ Scope                         Description
 ``user:rating:history``       Complete rating history
 ``user:match:submit``         Submit matches on player's behalf
 ``user:webhook:subscribe``    Receive rating change notifications
+``user:event:register``       Registration on your events, both ways
 ============================  ==============================================
 
 Step 2 — Exchange the code
