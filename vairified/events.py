@@ -296,7 +296,9 @@ class EventsResource:
         **Who you may list:** a member who gave your app the events permission
         (``user:event:register``, asked for in your Connect link), a player your
         app created, or anyone with a current Vairified sign-up on this listing.
-        A TRUSTED app may list any member who has not disconnected it. Anyone
+        A TRUSTED app may list any member who has not disconnected it. A member
+        who disconnected your app, TRUSTED or not, can be listed only where they
+        hold a current Vairified sign-up. Anyone
         else comes back in ``refused`` with its reason, and everyone else on the
         list is still applied -- so check ``refused`` on every call.
 
