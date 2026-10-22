@@ -424,8 +424,8 @@ class EventSubmission(BaseModel):
     Required on every submission, after ``start_date``, and it cannot be
     cleared. Building an ``EventSubmission`` without it raises a validation
     error and nothing is sent; a raw request body without it is refused by the
-    API with a 400 saying the end date is required. An event whose end has passed can no longer be submitted or
-    updated, only withdrawn.
+    API with a 400 saying the end date is required. An event whose end has
+    passed can no longer be submitted or updated, only withdrawn.
     """
 
     # ---- Optional: omitted keeps the stored value, None clears it ----
