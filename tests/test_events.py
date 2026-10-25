@@ -419,7 +419,7 @@ class TestEventsMembers:
         """
         On your own listing a member who disconnected your app, or never shared
         their profile, comes back as member number and status only. One such
-        row must not fail the whole roster (review finding C AR-7), and the
+        row must not fail the whole roster, and the
         absent profile fields read as None -- "not shared", never "no".
         """
         respx.get(f"{base_url}/partner/event/48213/members").mock(
