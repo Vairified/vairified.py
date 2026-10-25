@@ -180,6 +180,9 @@ for update in updates:
     print(f"{update.display_name} {arrow} delta={update.delta:+.3f}")
 ```
 
+Every member connected to your app is included. Polling needs only a working, unsuspended key;
+rating webhooks (`rating.updated`) are sent only to an app VAIR has approved.
+
 ## Match Submission
 
 Matches are submitted as a `MatchBatch` — defaults at the batch level apply
@@ -464,23 +467,25 @@ for refusal in result.refused:         # everyone else on the list was applied
 ```
 
 A member confirmed before and missing now is cancelled; an empty list clears the roster; the
-same list again changes nothing; at most 2,000 numbers. You may list a member who gave your
-app the events permission (`user:event:register`), a player your app created, or anyone with a
-VAIR sign-up on that listing; a TRUSTED app may list any member who has not disconnected it.
-Anyone else comes back in `refused` with a `reason`: `UNKNOWN_MEMBER`, `NO_EVENTS_PERMISSION`
-or `DISCONNECTED`.
+same list again changes nothing; at most 2,000 numbers. You may list a member connected to your
+app, a player your app created, or anyone with a VAIR sign-up on that listing; a TRUSTED app may
+list any member who has not disconnected it. A member can also connect from the listing's VAIR
+page when they click Register. Anyone else comes back in `refused` with a `reason`:
+`UNKNOWN_MEMBER`, `NOT_CONNECTED` ("This member hasn't connected your app.") or `DISCONNECTED`.
 
 Read the roster back with `client.events.members(event_id)`. On your own listing a member who
 signed up on VAIR and is waiting for you reads `enrollment_status="PENDING"`; send them in your
 list to confirm them. Each row carries `source` (`PARTNER_LIST`, `VAIR_SIGNUP` or `STAFF_ADD`)
-and `lapsed`. A member who has not shared their profile with you, or who disconnected your app,
-comes back with their member number and status only, so `first_name`, `last_name`,
+and `lapsed`. A member who never connected your app, or who disconnected it, comes back with
+their member number and status only, so `first_name`, `last_name`,
 `is_vairified` and `is_vair_plus` can be `None` — read that as "not shared", never as "no".
 
 When a player signs up for one of your listings on VAIR, or cancels, you receive an
 `event.registration` webhook (`is_event_registration_event()`, `EventRegistrationEventData`):
 `action` is `signed_up` or `cancelled`, `source` is `player` or `staff`, and the member's
-details follow what they allowed you. Your own list sends nothing back. A missed notice is
+details are included when they are connected to your app, your app is TRUSTED, or they are your
+own placeholder; otherwise you get their member number and status only. Your own list sends
+nothing back. A missed notice is
 recovered by reading the roster.
 
 ## Webhook Deliveries
@@ -534,6 +539,12 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 ```
 
 ### Available scopes
+
+A connection is all or nothing. While a member is connected, your app holds every scope below,
+whatever your Connect link asked for: the `scope` you send is still validated (an unknown scope
+is refused), but the consent screen lists every member permission with Allow or Cancel, and the
+token, refresh, userinfo and member responses report every member scope. You never need to ask
+for a wider scope later; the only way to take anything back is for the member to disconnect.
 
 | Scope                | Description                                    |
 |----------------------|------------------------------------------------|

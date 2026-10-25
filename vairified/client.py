@@ -476,10 +476,12 @@ class MembersResource(_Resource):
         """
         Poll for rating change notifications for subscribed members.
 
-        Returns a list of :class:`RatingUpdate` objects for every player
-        whose rating has changed since the last poll. Members are
-        considered "subscribed" when they have an active OAuth
-        connection with the ``user:webhook:subscribe`` scope.
+        Returns a list of :class:`RatingUpdate` objects. This is a snapshot,
+        not a change feed: every connected member is returned on every call,
+        whether or not their rating moved since you last polled. Every member with a
+        live connection to your app is included; a connection carries every
+        member permission. Polling needs only a working, unsuspended key,
+        while rating webhooks are sent only to an app Vairified has approved.
         """
         data = await self._client._request("GET", "/partner/rating-updates")
         if not isinstance(data, dict):
@@ -609,9 +611,10 @@ class MatchesResource(_Resource):
         """
         Submit a :class:`MatchBatch` for rating calculation.
 
-        All players in every match must have granted the ``user:match:submit``
-        scope via OAuth (unless your API key has the
-        ``user:match:submit:trusted`` scope, which skips per-player consent).
+        Every player in every match must be connected to your app (any live
+        connection; there is no separate per-match permission). A TRUSTED app
+        skips that check. An unconnected player is refused with "Player X has
+        not connected their VAIR account to this partner".
 
         Set ``batch.dry_run = True`` to validate without persisting.
 
@@ -713,7 +716,10 @@ class OAuthResource(_Resource):
         :param redirect_uri: Your application's callback URL.
         :param scopes: Scopes to request. Defaults to
             ``["user:profile:read", "user:rating:read"]``. ``user:profile:read`` is
-            always added if missing.
+            always added if missing. Each one is validated, but the list does not
+            limit what the member grants: a connection is all or nothing, so the
+            member is asked for every member permission and your tokens carry
+            every member scope.
         :param state: CSRF protection token — persist and verify on callback.
         :raises OAuthError: If a requested scope is invalid.
         """

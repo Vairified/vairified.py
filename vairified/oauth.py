@@ -13,6 +13,12 @@ from urllib.parse import urlencode
 #: Scope string literal — the union of every scope name the Vairified
 #: OAuth server accepts. Use this type in your own signatures to get
 #: autocomplete and type-checking for the scope strings you pass.
+#:
+#: A connection is all or nothing: while a member is connected, your app holds
+#: every one of these member scopes, whatever your Connect link asked for. The
+#: ``scope`` you send is still validated (an unknown scope is refused), but it
+#: does not limit what the member grants, so you never need to ask again for a
+#: wider scope. To take anything back, the member disconnects.
 OAuthScope = Literal[
     "user:profile:read",
     "user:profile:email",
@@ -23,7 +29,8 @@ OAuthScope = Literal[
     "user:event:register",
 ]
 
-# Available OAuth scopes
+# Available OAuth scopes. The consent screen lists every one of them, with
+# Allow or Cancel; there is nothing for the member to untick.
 SCOPES: dict[str, str] = {
     "user:profile:read": "Access your name, location, and verification status",
     "user:profile:email": "Access your email address",
@@ -37,7 +44,7 @@ SCOPES: dict[str, str] = {
     ),
 }
 
-# Default scopes requested
+# Default scopes requested. A connection grants every member scope regardless.
 DEFAULT_SCOPES: list[OAuthScope] = ["user:profile:read", "user:rating:read"]
 
 
@@ -86,7 +93,7 @@ class TokenResponse:
     :ivar access_token: Access token for API requests.
     :ivar refresh_token: Refresh token for obtaining new access tokens.
     :ivar expires_in: Token expiration in seconds.
-    :ivar scope: Granted scopes.
+    :ivar scope: Granted scopes -- every member scope, whatever was requested.
     :ivar player_id: Connected player's external ID.
     """
 
@@ -109,7 +116,8 @@ def get_authorization_url(
     you should use the Vairified client's OAuth methods instead.
 
     :param config: OAuth configuration.
-    :param scopes: Permission scopes to request.
+    :param scopes: Permission scopes to request. Validated, but they do not
+        limit what the member grants: a connection holds every member scope.
     :param state: CSRF protection state parameter.
     :returns: URL to redirect the user to.
 

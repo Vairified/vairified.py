@@ -189,8 +189,8 @@ class EventsResource:
         (``enrollment_status="PENDING"``), with ``source`` and ``lapsed`` on
         every row: send them in :meth:`set_members` to confirm them. This read
         is also how you recover an ``event.registration`` notice you missed. A
-        member who has not shared their profile with you, or who disconnected
-        your app, comes back with their member number and status only, so
+        member who never connected your app, or who disconnected it, comes back
+        with their member number and status only, so
         ``first_name``, ``last_name``, ``is_vairified`` and ``is_vair_plus`` can
         be ``None``.
 
@@ -293,14 +293,15 @@ class EventsResource:
         (``PENDING`` in :meth:`members`) are confirmed when your list includes
         them, and left waiting when it does not.
 
-        **Who you may list:** a member who gave your app the events permission
-        (``user:event:register``, asked for in your Connect link), a player your
-        app created, or anyone with a current Vairified sign-up on this listing.
-        A TRUSTED app may list any member who has not disconnected it. A member
-        who disconnected your app, TRUSTED or not, can be listed only where they
-        hold a current Vairified sign-up. Anyone
-        else comes back in ``refused`` with its reason, and everyone else on the
-        list is still applied -- so check ``refused`` on every call.
+        **Who you may list:** a member connected to your app, a player your app
+        created, or anyone with a current Vairified sign-up on this listing. A
+        member can also connect from the listing's Vairified page when they
+        click Register. A TRUSTED app may list any member who has not
+        disconnected it. A member who disconnected your app, TRUSTED or not, can
+        be listed only where they hold a current Vairified sign-up. Anyone else
+        comes back in ``refused`` with its reason (``NOT_CONNECTED``,
+        ``DISCONNECTED`` or ``UNKNOWN_MEMBER``), and everyone else on the list
+        is still applied -- so check ``refused`` on every call.
 
         No ``event.registration`` notice is sent for changes your own list
         makes. Requires ``key:event:submit``.

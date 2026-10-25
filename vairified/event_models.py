@@ -183,26 +183,32 @@ class EventMember(BaseModel):
     One enrolled player on an event's roster.
 
     :rotating_light: **On one of YOUR OWN listings a row can carry the member
-    number and status only.** A member who disconnected your app, or who never
-    allowed you their profile (and was not listed by a TRUSTED app), comes back
-    with ``member_id``, ``enrollment_status``, ``is_paid``, ``source`` and
+    number and status only.** A member connected to your app, a placeholder your
+    app created, or (for a TRUSTED app) a member who has not disconnected it
+    comes back with their name, VAIR status and rating. A member who
+    disconnected your app, or who never connected your app, comes back with
+    ``member_id``, ``enrollment_status``, ``is_paid``, ``source`` and
     ``lapsed`` and nothing else, so ``first_name``, ``last_name``,
-    ``is_vairified`` and ``is_vair_plus`` are ``None`` there. ``None`` means
-    "not shared with you", never "no" -- do not read a missing ``is_vair_plus``
-    as "does not hold VAIR+". On every other event every field is present.
+    ``is_vairified`` and ``is_vair_plus`` are ``None`` there. A member
+    Vairified staff added who never connected your app also carries their
+    name. ``None`` means "not shared with you", never "no" -- do not read a
+    missing ``is_vair_plus`` as "does not hold VAIR+". On every other event
+    every field is present.
     """
 
     model_config = _RESPONSE_CONFIG
 
     member_id: int = Field(alias="memberId")
     first_name: str | None = Field(default=None, alias="firstName")
-    """``None`` on your own listing when the member has not shared their profile."""
+    """``None`` on your own listing when the member disconnected or never
+    connected your app."""
     last_name: str | None = Field(default=None, alias="lastName")
     """``None`` under the same conditions as :attr:`first_name`."""
     rating: float | None = None
     """
     Overall-open rating in the event's sport, truncated to 3 decimals. ``None``
-    when the player has no rating yet, or has not shared it with you.
+    when the player has no rating yet, or on your own listing when they
+    disconnected or never connected your app.
     """
     is_vairified: bool | None = Field(default=None, alias="isVairified")
     """
@@ -268,9 +274,9 @@ class EventRosterRefusal(BaseModel):
       for a number staff merged into another account, or whose member is
       deleting their account; that person's place on the listing is left as it
       was, neither confirmed nor cancelled.
-    * ``NO_EVENTS_PERMISSION`` -- the member has not given your app the events
-      permission (``user:event:register``), is not a player your app created,
-      and holds no current Vairified sign-up on this listing.
+    * ``NOT_CONNECTED`` -- "This member hasn't connected your app." The member
+      has no connection to your app, is not a player your app created, holds no
+      current Vairified sign-up on this listing, and your app is not TRUSTED.
     * ``DISCONNECTED`` -- the member disconnected your app (a TRUSTED app
       included) and holds no current Vairified sign-up on this listing. They can
       be listed again once they reconnect.

@@ -357,8 +357,9 @@ special scope needed — any key with ``key:match:submit`` can dry-run:
 Rating Updates
 --------------
 
-Poll for rating change notifications for players who have subscribed
-via the ``user:webhook:subscribe`` OAuth scope:
+Poll for rating change notifications for every member connected to your
+app. Polling needs only a working, unsuspended key; rating webhooks
+(``rating.updated``) are sent only to an app Vairified has approved:
 
 .. code-block:: python
 
@@ -400,6 +401,14 @@ OAuth Connect Flow
 The Partner API uses OAuth to request player consent before accessing
 their data. Players must explicitly approve your application before you
 can read their rating or submit matches on their behalf.
+
+A connection is all or nothing. While a member is connected, your app
+holds every member scope, whatever your Connect link asked for. The
+``scope`` you send is still validated (an unknown scope is refused), but
+the consent screen lists every member permission with Allow or Cancel,
+and the token, refresh, userinfo and member responses report every member
+scope. You never need to ask for a wider scope later; the only way to take
+anything back is for the member to disconnect.
 
 All OAuth operations live on the ``client.oauth`` sub-resource.
 
@@ -471,7 +480,7 @@ After the user approves, they're redirected back with a ``code`` and
    tokens.access_token
    tokens.refresh_token
    tokens.expires_in
-   tokens.scope          # list[str] of granted scopes
+   tokens.scope          # list[str] of granted scopes (every member scope)
    tokens.player_id      # Connected player's external ID
 
    member = await client.members.get(tokens.player_id)

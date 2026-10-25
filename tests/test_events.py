@@ -852,10 +852,8 @@ class TestEventsSetMembers:
                     refused=[
                         {
                             "memberId": 4873399,
-                            "reason": "NO_EVENTS_PERMISSION",
-                            "message": (
-                                "This member hasn't given you the events permission."
-                            ),
+                            "reason": "NOT_CONNECTED",
+                            "message": "This member hasn't connected your app.",
                         },
                         {
                             "memberId": 4873400,
@@ -892,11 +890,12 @@ class TestEventsSetMembers:
             20,
             2,
         )
-        permission, disconnected, unknown = result.refused
-        assert (permission.member_id, permission.reason) == (
+        not_connected, disconnected, unknown = result.refused
+        assert (not_connected.member_id, not_connected.reason) == (
             4873399,
-            "NO_EVENTS_PERMISSION",
+            "NOT_CONNECTED",
         )
+        assert not_connected.message == "This member hasn't connected your app."
         assert (disconnected.member_id, disconnected.reason) == (
             4873400,
             "DISCONNECTED",

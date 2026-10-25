@@ -40,8 +40,8 @@ from vairified.errors import WebhookSignatureError
 # red. Do not regenerate it in one repo without regenerating it in the other.
 #
 # The body carries two things deliberately: non-ASCII characters, and NO
-# ``sports`` key (the member-declined-rating-scope cohort, which production has
-# none of today).
+# ``sports`` key (``sports`` is now always sent, but a delivery queued before
+# that change can still arrive without it, and must still verify).
 GOLDEN_SECRET = "whsec_golden_vector_do_not_use_in_production"
 GOLDEN_TIMESTAMP = 1758700000
 GOLDEN_HEADER = (
@@ -115,10 +115,10 @@ class TestGoldenVector:
         )
 
     def test_absent_sports_stays_absent_never_empty(self):
-        # "We were not permitted to tell you" must stay distinguishable from
-        # "holds no certifications". Defaulting to {} silently turns the first
-        # into the second -- which is what this repo's own convention for
-        # per-sport maps would have done.
+        # An absent block (a delivery queued before ``sports`` was always sent)
+        # must stay distinguishable from "holds no certifications". Defaulting
+        # to {} silently turns the first into the second -- which is what this
+        # repo's own convention for per-sport maps would have done.
         event = verify_webhook(
             GOLDEN_BODY, GOLDEN_HEADER, GOLDEN_SECRET, now_seconds=NOW
         )

@@ -168,11 +168,14 @@ class MemberStatusEventData(BaseModel):
     serialisers do
     normalise missing keys into nulls, and both mean "no per-sport data here".
 
-    :rotating_light: **``None`` when the member did not grant ``user:rating:read``
-    -- absent, not empty.** "We were not permitted to tell you" is a different
-    claim from "holds no certifications", and defaulting this to ``{}`` silently
-    turns the first into the second. It is deliberately **not**
-    ``default_factory=dict``, unlike the per-sport map on the member record.
+    **Always sent.** It used to be left out when the member had not allowed you
+    their ratings; a connection now carries every member permission, so every
+    delivery includes it. It stays optional here, defaulting to ``None``, only
+    so a delivery queued before that change still verifies -- refusing one
+    costs the whole delivery. A member with no current certification arrives as
+    ``{}``. It is deliberately **not** ``default_factory=dict``, unlike the
+    per-sport map on the member record: an absent block is not the same claim
+    as "holds no certifications".
 
     :rotating_light: A sport appears only while the member holds a **current**
     certification in it. Expired and revoked certifications are not reported, so a
@@ -236,10 +239,15 @@ class RatingUpdatedEventData(BaseModel):
     is a mistake the TypeScript SDK made once, and the reason this docstring
     exists.
 
-    :rotating_light: **Two variants, distinguished by
-    :attr:`rating_data_withheld`.** An app holding ``user:webhook:subscribe`` but
-    not ``user:rating:read`` is told *that* a member's rating changed and not
-    *what it changed to*.
+    A connected member's rating values are always included: a connection carries
+    every member permission. Rating webhooks are sent only to an app Vairified
+    has approved; polling (:meth:`vairified.client.MembersResource.rating_updates`)
+    needs only a working, unsuspended key.
+
+    :rotating_light: **A notification-only variant still exists, marked by
+    :attr:`rating_data_withheld`**, where the member is identified and the
+    rating values are absent. It is no longer sent for a connected member; see
+    :attr:`rating_data_withheld` for where it can still appear.
     """
 
     model_config = _EVENT_CONFIG
@@ -257,8 +265,8 @@ class RatingUpdatedEventData(BaseModel):
     :class:`RatingUpdatedSport` and can be parsed with it if you want the checking.
 
 
-    :rotating_light: **``None`` when the partner lacks ``user:rating:read``.**
-    Check :attr:`rating_data_withheld` rather than reading absence as "no ratings".
+    :rotating_light: **``None`` on the notification-only variant.** Check
+    :attr:`rating_data_withheld` rather than reading absence as "no ratings".
     """
     changed_at: str | None = Field(default=None, alias="changedAt")
     sequence: str
@@ -290,7 +298,11 @@ class RatingUpdatedEventData(BaseModel):
     """
     rating_data_withheld: Any = Field(default=None, alias="ratingDataWithheld")
     """``True`` only on the notification variant, where :attr:`sports` is absent by
-    design rather than because nothing changed."""
+    design rather than because nothing changed.
+
+    No longer sent for a connected member. It can still appear in two places: in
+    the delivery log, for a delivery abandoned after the member disconnected your
+    app, and on a legacy subscription that predates Connect."""
 
 
 class RatingUpdatedEvent(WebhookEventEnvelope):
@@ -396,11 +408,11 @@ class EventRegistrationEventData(BaseModel):
     changed_at: Any = Field(default=None, alias="changedAt")
     """``str``, ISO 8601. When it happened."""
     first_name: Any = Field(default=None, alias="firstName")
-    """``str``. Present when the member allowed you their profile
-    (``user:profile:read``), your app is TRUSTED, the member is a placeholder
-    your app created, or Vairified staff registered a member who never connected
-    to you. ``None`` for a member who disconnected your app: from then on you
-    receive their member number only."""
+    """``str``. Present when the member is connected to your app, your app is
+    TRUSTED, the member is a placeholder your app created, or Vairified staff
+    registered a member who never connected to you. ``None`` otherwise,
+    including for a member who disconnected your app: you receive their member
+    number and status only."""
     last_name: Any = Field(default=None, alias="lastName")
     """``str``. As :attr:`first_name`."""
     is_vairified: Any = Field(default=None, alias="isVairified")
@@ -411,8 +423,8 @@ class EventRegistrationEventData(BaseModel):
     ``None`` means "not shared", never "no"."""
     rating: Any = None
     """``float``. The member's rating in the listing's sport, when the member
-    allowed it (``user:rating:read``), your app is TRUSTED, or the member is
-    your own placeholder."""
+    is connected to your app, your app is TRUSTED, or the member is your own
+    placeholder."""
 
 
 class EventRegistrationEvent(WebhookEventEnvelope):
