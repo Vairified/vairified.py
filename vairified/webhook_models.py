@@ -38,6 +38,8 @@ __all__ = [
     "EventCreatedClub",
     "EventCreatedEvent",
     "EventCreatedEventData",
+    "EventRegistrationEvent",
+    "EventRegistrationEventData",
     "MemberStatusEvent",
     "MemberStatusEventData",
     "MemberStatusEventSport",
@@ -166,11 +168,14 @@ class MemberStatusEventData(BaseModel):
     serialisers do
     normalise missing keys into nulls, and both mean "no per-sport data here".
 
-    :rotating_light: **``None`` when the member did not grant ``user:rating:read``
-    -- absent, not empty.** "We were not permitted to tell you" is a different
-    claim from "holds no certifications", and defaulting this to ``{}`` silently
-    turns the first into the second. It is deliberately **not**
-    ``default_factory=dict``, unlike the per-sport map on the member record.
+    **Always sent.** It used to be left out when the member had not allowed you
+    their ratings; a connection now carries every member permission, so every
+    delivery includes it. It stays optional here, defaulting to ``None``, only
+    so a delivery queued before that change still verifies -- refusing one
+    costs the whole delivery. A member with no current certification arrives as
+    ``{}``. It is deliberately **not** ``default_factory=dict``, unlike the
+    per-sport map on the member record: an absent block is not the same claim
+    as "holds no certifications".
 
     :rotating_light: A sport appears only while the member holds a **current**
     certification in it. Expired and revoked certifications are not reported, so a
@@ -234,10 +239,15 @@ class RatingUpdatedEventData(BaseModel):
     is a mistake the TypeScript SDK made once, and the reason this docstring
     exists.
 
-    :rotating_light: **Two variants, distinguished by
-    :attr:`rating_data_withheld`.** An app holding ``user:webhook:subscribe`` but
-    not ``user:rating:read`` is told *that* a member's rating changed and not
-    *what it changed to*.
+    A connected member's rating values are always included: a connection carries
+    every member permission. Rating webhooks are sent only to an app Vairified
+    has approved; polling (:meth:`vairified.client.MembersResource.rating_updates`)
+    needs only a working, unsuspended key.
+
+    :rotating_light: **A notification-only variant still exists, marked by
+    :attr:`rating_data_withheld`**, where the member is identified and the
+    rating values are absent. It is no longer sent for a connected member; see
+    :attr:`rating_data_withheld` for where it can still appear.
     """
 
     model_config = _EVENT_CONFIG
@@ -255,8 +265,8 @@ class RatingUpdatedEventData(BaseModel):
     :class:`RatingUpdatedSport` and can be parsed with it if you want the checking.
 
 
-    :rotating_light: **``None`` when the partner lacks ``user:rating:read``.**
-    Check :attr:`rating_data_withheld` rather than reading absence as "no ratings".
+    :rotating_light: **``None`` on the notification-only variant.** Check
+    :attr:`rating_data_withheld` rather than reading absence as "no ratings".
     """
     changed_at: str | None = Field(default=None, alias="changedAt")
     sequence: str
@@ -288,7 +298,11 @@ class RatingUpdatedEventData(BaseModel):
     """
     rating_data_withheld: Any = Field(default=None, alias="ratingDataWithheld")
     """``True`` only on the notification variant, where :attr:`sports` is absent by
-    design rather than because nothing changed."""
+    design rather than because nothing changed.
+
+    No longer sent for a connected member. It can still appear in two places: in
+    the delivery log, for a delivery abandoned after the member disconnected your
+    app, and on a legacy subscription that predates Connect."""
 
 
 class RatingUpdatedEvent(WebhookEventEnvelope):
@@ -348,6 +362,83 @@ class EventCreatedEvent(WebhookEventEnvelope):
     data: EventCreatedEventData
 
 
+class EventRegistrationEventData(BaseModel):
+    """The ``data`` block of an ``event.registration`` delivery.
+
+    Sent to the partner app that owns a listing when a player signs up for that
+    listing on Vairified, or a VAIR sign-up there is cancelled: by the player,
+    by Vairified staff, or by the player deleting their Vairified account.
+    Nothing your own app did is sent back to you -- your own member list
+    (:meth:`vairified.events.EventsResource.set_members`) and your own
+    withdrawal send nothing.
+
+    :rotating_light: **:attr:`event_id` here is an INT and is not the envelope's
+    :attr:`WebhookEventEnvelope.event_id`**, exactly as on ``event.created``:
+    the envelope's is the delivery's own string id, used for deduplication; this
+    one is your listing's Vairified event number.
+
+    **Only the envelope is validated**, as on ``event.created``: every field
+    here is handed over as it arrived. A missed delivery is recovered by reading
+    the listing's roster back (:meth:`vairified.events.EventsResource.members`),
+    which shows every VAIR sign-up waiting for you; there is no replay endpoint.
+    Never carries an email address or a phone number.
+    """
+
+    model_config = _EVENT_CONFIG
+
+    event_id: Any = Field(default=None, alias="eventId")
+    """``int``. The Vairified event number of your listing."""
+    partner_event_id: Any = Field(default=None, alias="partnerEventId")
+    """``str``, or ``None``. Your own id for the listing, as you sent it."""
+    member_id: Any = Field(default=None, alias="memberId")
+    """``int``. The member's Vairified member number."""
+    action: Any = None
+    """``"signed_up"`` or ``"cancelled"`` today. Deliberately not a ``Literal``.
+
+    ``signed_up``: the member asked for a place on Vairified; it is pending
+    until your member list names them. ``cancelled``: a pending place was taken
+    back on Vairified, or the member deleted their Vairified account, which ends
+    their places on your listings that had not finished, confirmed ones
+    included.
+    """
+    source: Any = None
+    """``"player"`` (the member, including deleting their account) or
+    ``"staff"`` (Vairified staff, on the member's behalf) today. Deliberately not
+    a ``Literal``."""
+    changed_at: Any = Field(default=None, alias="changedAt")
+    """``str``, ISO 8601. When it happened."""
+    first_name: Any = Field(default=None, alias="firstName")
+    """``str``. Present when the member is connected to your app, your app is
+    TRUSTED, the member is a placeholder your app created, or Vairified staff
+    registered a member who never connected to you. ``None`` otherwise,
+    including for a member who disconnected your app: you receive their member
+    number and status only."""
+    last_name: Any = Field(default=None, alias="lastName")
+    """``str``. As :attr:`first_name`."""
+    is_vairified: Any = Field(default=None, alias="isVairified")
+    """``bool``. Whether the member holds a verified rating. With the profile
+    only; ``None`` means "not shared", never "no"."""
+    is_vair_plus: Any = Field(default=None, alias="isVairPlus")
+    """``bool``. Whether the member holds VAIR+ now. With the profile only;
+    ``None`` means "not shared", never "no"."""
+    rating: Any = None
+    """``float``. The member's rating in the listing's sport, when the member
+    is connected to your app, your app is TRUSTED, or the member is your own
+    placeholder."""
+
+
+class EventRegistrationEvent(WebhookEventEnvelope):
+    """An ``event.registration`` delivery.
+
+    Delivery is at-least-once: deduplicate on the envelope's
+    :attr:`~WebhookEventEnvelope.event_id`. A member who signs up, cancels and
+    signs up again is three notices with three ids.
+    """
+
+    event: Literal["event.registration"]
+    data: EventRegistrationEventData
+
+
 class UnknownWebhookEvent(WebhookEventEnvelope):
     """Any event this SDK version does not model richly.
 
@@ -365,6 +456,7 @@ VerifiedWebhookEvent = (
     | ConnectionRevokedEvent
     | RatingUpdatedEvent
     | EventCreatedEvent
+    | EventRegistrationEvent
     | UnknownWebhookEvent
 )
 """A verified webhook event.

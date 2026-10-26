@@ -17,6 +17,7 @@ from vairified import (
     dedupe_key,
     is_connection_revoked_event,
     is_event_created_event,
+    is_event_registration_event,
     is_member_status_event,
     is_newer_sequence,
     is_rating_updated_event,
@@ -39,8 +40,8 @@ from vairified.errors import WebhookSignatureError
 # red. Do not regenerate it in one repo without regenerating it in the other.
 #
 # The body carries two things deliberately: non-ASCII characters, and NO
-# ``sports`` key (the member-declined-rating-scope cohort, which production has
-# none of today).
+# ``sports`` key (``sports`` is now always sent, but a delivery queued before
+# that change can still arrive without it, and must still verify).
 GOLDEN_SECRET = "whsec_golden_vector_do_not_use_in_production"
 GOLDEN_TIMESTAMP = 1758700000
 GOLDEN_HEADER = (
@@ -114,10 +115,10 @@ class TestGoldenVector:
         )
 
     def test_absent_sports_stays_absent_never_empty(self):
-        # "We were not permitted to tell you" must stay distinguishable from
-        # "holds no certifications". Defaulting to {} silently turns the first
-        # into the second -- which is what this repo's own convention for
-        # per-sport maps would have done.
+        # An absent block (a delivery queued before ``sports`` was always sent)
+        # must stay distinguishable from "holds no certifications". Defaulting
+        # to {} silently turns the first into the second -- which is what this
+        # repo's own convention for per-sport maps would have done.
         event = verify_webhook(
             GOLDEN_BODY, GOLDEN_HEADER, GOLDEN_SECRET, now_seconds=NOW
         )
@@ -581,6 +582,101 @@ class TestAllFourEventTypes:
         # The shadowing pair: envelope id is the DELIVERY, data id is the EVENT.
         assert event.event_id == "evt_envelope"
         assert event.data.event_id == 55123
+
+    def test_event_registration_carries_the_listing_and_the_member(self):
+        import json
+
+        body = json.dumps(
+            {
+                "event": "event.registration",
+                "eventId": "evt_0b6f3f0e-6f4c-4d7d-9a7e-2f1b9b0a1c55",
+                "timestamp": "2026-10-20T15:02:02.721Z",
+                "data": {
+                    "eventId": 70214,
+                    "partnerEventId": "summer-open-2026",
+                    "memberId": 4873327,
+                    "action": "signed_up",
+                    "source": "staff",
+                    "changedAt": "2026-10-20T15:02:02.721Z",
+                    "firstName": "Ann",
+                    "lastName": "Lee",
+                    "isVairified": True,
+                    "isVairPlus": False,
+                    "rating": 4.256,
+                },
+            }
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_event_registration_event(event)
+        assert not is_event_created_event(event)
+        # The shadowing pair again: envelope id is the DELIVERY, data id the LISTING.
+        assert event.event_id == "evt_0b6f3f0e-6f4c-4d7d-9a7e-2f1b9b0a1c55"
+        data = event.data
+        assert data.event_id == 70214
+        assert data.partner_event_id == "summer-open-2026"
+        assert data.member_id == 4873327
+        assert (data.action, data.source) == ("signed_up", "staff")
+        assert data.changed_at == "2026-10-20T15:02:02.721Z"
+        assert (data.first_name, data.last_name) == ("Ann", "Lee")
+        assert (data.is_vairified, data.is_vair_plus, data.rating) == (
+            True,
+            False,
+            4.256,
+        )
+        assert dedupe_key(event) == "evt_0b6f3f0e-6f4c-4d7d-9a7e-2f1b9b0a1c55"
+
+    def test_event_registration_for_a_disconnected_member_is_number_only(self):
+        """A member who disconnected the app: member number, action and source."""
+        import json
+
+        body = json.dumps(
+            {
+                "event": "event.registration",
+                "eventId": "evt_cancel",
+                "timestamp": "2026-10-20T15:02:02.721Z",
+                "data": {
+                    "eventId": 70214,
+                    "partnerEventId": None,
+                    "memberId": 4873327,
+                    "action": "cancelled",
+                    "source": "player",
+                    "changedAt": "2026-10-20T15:02:02.721Z",
+                },
+            }
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_event_registration_event(event)
+        assert event.data.action == "cancelled"
+        assert event.data.partner_event_id is None
+        assert (
+            event.data.first_name,
+            event.data.last_name,
+            event.data.is_vairified,
+            event.data.is_vair_plus,
+            event.data.rating,
+        ) == (None, None, None, None, None)
+
+    def test_event_registration_hands_over_an_unfamiliar_action(self):
+        """``action``/``source`` grow on the API's schedule: never refused."""
+        import json
+
+        body = json.dumps(
+            {
+                "event": "event.registration",
+                "eventId": "evt_new",
+                "timestamp": "2026-10-20T15:02:02.721Z",
+                "data": {"memberId": 1, "action": "waitlisted", "source": "partner"},
+            }
+        )
+        event = verify_webhook(
+            body, sign(body, GOLDEN_SECRET, NOW), GOLDEN_SECRET, now_seconds=NOW
+        )
+        assert is_event_registration_event(event)
+        assert (event.data.action, event.data.source) == ("waitlisted", "partner")
 
 
 # ---------------------------------------------------------------------------

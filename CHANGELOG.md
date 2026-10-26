@@ -7,6 +7,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- towncrier release notes start -->
 
+## [0.9.0] - 2026-10-25
+
+### Added
+
+- **`client.events` — read the event catalogue.** `events.list()` pages through what is on, near a
+  point and within a date range; `events.get(event_id)` reads one event and `events.members(event_id)`
+  its deduplicated roster. `lat`, `lng` and `radius_miles` go together, and the API refuses one or two
+  of them alone rather than quietly ignoring the filter; `radius_miles` is at most 250, and a larger
+  radius is refused rather than narrowed. Dates match on overlap, so a multi-day event is returned when
+  the window falls anywhere inside it, and each date must carry a time zone: pass an aware `datetime`
+  or a string with `Z` or an offset. A naive `datetime` is refused before anything is sent, because the
+  API refuses a date-time without a zone and sending one would only fail a round trip later. Every
+  event carries a `location` with its address and coordinates; `latitude` and `longitude` are `None`
+  for an event that has never been geocoded, never `0`. Adds the frozen models `PartnerEvent`,
+  `EventsPage`, `EventLocation`, `EventClub`, `EventCreator`, `EventMembers` and `EventMember`.
+  Requires `key:event:read`. ([#1320](https://github.com/Vairified/Vairified/issues/1320))
+- **List your own events in VAIR's events directory — `events.submit()`, `events.withdraw()` and
+  `events.list(mine=True)`.** A listing is keyed by your own `partner_event_id`: submitting the same
+  one again updates it in place, keeps its Vairified event id, and restores it if you had withdrawn
+  it, and `created` on the result says which happened. Build the submission as an `EventSubmission`;
+  **only the fields you set are sent, so leaving one out keeps its current value and setting it to
+  `None` clears it.** That is what lets an integration written before a field existed keep
+  re-submitting without erasing it. `start_date` and `end_date` are both required on every
+  submission and cannot be cleared; the API refuses a listing without an end date with a 400 saying
+  the end date is required. `max_spots` and `max_teams` are 1 to 100,000, and `logo_url` takes
+  an https image that Vairified fetches and stores itself. `withdraw()` succeeds with
+  `withdrawn=False` on a listing already out of the directory, so a batch is safe to retry, and an id
+  you never submitted is a `NotFoundError`. `list(mine=True)` returns your listings with their
+  `partner_event_id`, the fields you sent, `logo_source_url` and the stored `logo_url`, and keeps a
+  listing Vairified removed with `removed=True`: re-submitting that one is refused with a 403, so stop
+  sending it. Requires `key:event:submit`, which `key:write` and `key:admin` do not imply, and an API
+  key linked to your partner app; a key holding only `key:event:submit` can still read back its own
+  listings. ([#1320](https://github.com/Vairified/Vairified/issues/1320))
+- **Send your listing's confirmed members, and hear about VAIR sign-ups — `events.set_members()`,
+  the `event.registration` webhook and the `user:event:register` permission.**
+  `set_members(partner_event_id, member_ids)` sends your WHOLE confirmed list for one of your
+  listings: anyone confirmed before and missing now is cancelled, an empty list clears the roster,
+  the same list again changes nothing, and at most 2,000 member numbers are taken. It returns an
+  `EventRosterResult` with the `added`, `confirmed`, `unchanged` and `removed` counts and a `refused`
+  list of `EventRosterRefusal`; a refused number carries a `reason` of `UNKNOWN_MEMBER`,
+  `NOT_CONNECTED` or `DISCONNECTED`, and everyone else on the list is still applied. You may list a
+  member connected to your app, a player your app created, or anyone with a VAIR sign-up on the
+  listing; a TRUSTED app may list any member who has not disconnected it. The new
+  `user:event:register` permission is added to `OAuthScope` and `SCOPES`. On your own listing
+  `events.members()` now shows members waiting for you as `PENDING`, with each row's `source`
+  (`PARTNER_LIST`, `VAIR_SIGNUP` or `STAFF_ADD`) and `lapsed`; a member who never connected your
+  app, or who disconnected it, comes back with their member number and status only, so
+  `EventMember.first_name`, `last_name`, `is_vairified` and `is_vair_plus` are now optional and read
+  `None` there rather than failing the whole roster. When a player signs up for or cancels one of
+  your listings on VAIR, `verify_webhook` returns an `EventRegistrationEvent`
+  (`is_event_registration_event()`), whose `EventRegistrationEventData` carries the listing's
+  `event_id` and `partner_event_id`, the `member_id`, `action` (`signed_up` or `cancelled`),
+  `source` (`player` or `staff`), `changed_at`, and the member's details when they are connected to
+  your app, your app is TRUSTED, or they are your own placeholder. Requires `key:event:submit`; this release needs the Partner API deployment that added these
+  routes. ([#1320](https://github.com/Vairified/Vairified/issues/1320))
+
+### Changed
+
+- **A member's connection to your app is now all or nothing.** While a member is connected, your
+  app holds every member scope, whatever your Connect link asked for; the `scope` you send is still
+  validated but no longer limits what the member grants, and the only way to take anything back is
+  to disconnect. `OAuthScope`, `SCOPES`, `DEFAULT_SCOPES` and the scope helpers are unchanged; only
+  their documentation is. The `member.status`
+  webhook now always carries `sports`; `MemberStatusEventData.sports` still defaults to `None` so
+  that a delivery queued before the change still verifies. `rating.updated` always carries a
+  connected member's ratings, so `ratingDataWithheld` now appears only in the delivery log, for a
+  delivery abandoned after the member disconnected, and on a legacy subscription that predates
+  Connect. Match submission needs every player connected to your app, with no separate per-match
+  permission. ([#1320](https://github.com/Vairified/Vairified/issues/1320))
+
 ## [0.8.0] - 2026-09-24
 
 ### Added

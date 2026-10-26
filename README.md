@@ -58,6 +58,7 @@ Every operation lives on a sub-resource that matches the REST path:
 | `client.matches`        | `submit`, `tournament_import`, `test_webhook`            |
 | `client.oauth`          | `authorize`, `exchange_token`, `refresh`, `revoke`      |
 | `client.leaderboard`    | `list`, `rank`, `categories`                            |
+| `client.events`         | `list`, `get`, `members`, `submit`, `withdraw`          |
 | `client.webhooks`       | `deliveries`                                            |
 | `client.usage()`        | Rate-limit + request-count stats                        |
 
@@ -178,6 +179,9 @@ for update in updates:
     arrow = "↑" if update.improved else "↓"
     print(f"{update.display_name} {arrow} delta={update.delta:+.3f}")
 ```
+
+Every member connected to your app is included. Polling needs only a working, unsuspended key;
+rating webhooks (`rating.updated`) are sent only to an app VAIR has approved.
 
 ## Match Submission
 
@@ -307,6 +311,7 @@ from vairified import (
     is_rating_updated_event,
     is_connection_revoked_event,
     is_event_created_event,
+    is_event_registration_event,
 )
 
 event = verify_webhook(raw_body, signature_header, os.environ["VAIR_WEBHOOK_SECRET"])
@@ -319,6 +324,8 @@ elif is_connection_revoked_event(event):
     ...      # the member disconnected your app — stop reading their data
 elif is_event_created_event(event):
     ...      # a new event was published
+elif is_event_registration_event(event):
+    ...      # a player signed up for, or cancelled, one of YOUR listings on VAIR
 else:
     ...      # an event type this version does not know about. It still verified,
              # and arrives as the plain envelope — ignore it, or log it.
@@ -390,6 +397,97 @@ Every refusal is a `WebhookSignatureError` with a `reason` you can branch on:
 
 The message never contains the secret or either digest.
 
+## Events
+
+Browse the event catalogue (needs `key:event:read`):
+
+```python
+from datetime import datetime, timezone
+
+page = await client.events.list(
+    type="TOURNAMENT",
+    date_from=datetime(2026, 9, 1, tzinfo=timezone.utc),
+    lat=30.2849, lng=-97.7341, radius_miles=25,   # all three or none; at most 250
+)
+for event in page.events:
+    print(event.event_id, event.name, event.location)
+print(page.total, "in all")                       # page with limit= and offset=
+
+event = await client.events.get(12345)
+roster = await client.events.members(12345)
+```
+
+Dates must carry a time zone: pass an aware `datetime`, or a string with `Z` or an offset.
+A plain date is refused.
+
+### Listing your own events
+
+With `key:event:submit` you can put your own events in VAIR's events directory. Players see
+the listing and register on your site; nothing is paid on VAIR.
+
+```python
+from vairified import EventSubmission, EventSubmissionLocation
+
+result = await client.events.submit(EventSubmission(
+    partner_event_id="autumn-doubles-avon",      # YOUR id; re-send it to update
+    sport_code="pickleball",
+    name="Autumn Doubles",
+    type="TOURNAMENT",
+    registration_url="https://example.com/register/autumn-doubles",
+    start_date=datetime(2026, 11, 14, 14, tzinfo=timezone.utc),
+    end_date=datetime(2026, 11, 15, 22, tzinfo=timezone.utc),   # required, like start_date
+    max_spots=128,                                # 1 to 100,000
+    logo_url="https://example.com/logos/autumn.png",
+    location=EventSubmissionLocation(city="Avon", state="CO"),
+))
+print(result.event_id, "created" if result.created else "updated")
+
+# Reconcile: your own listings carry partner_event_id, removed and what you sent.
+mine = await client.events.list(mine=True)
+
+await client.events.withdraw("autumn-doubles-avon")   # re-submit to restore
+```
+
+**Leave a field out to keep its current value; set it to `None` to clear it.** Only the
+fields you set are sent, so an integration that does not know a newer field never erases it.
+A listing VAIR removed comes back from `list(mine=True)` with `removed=True`; re-submitting it
+is refused with a 403, so stop sending it. Every submission carries an `end_date`; one without
+is refused with a 400 saying the end date is required.
+
+### Your listing's members
+
+Send your **whole** confirmed list for a listing, by VAIR member number, whenever your roster
+changes (needs `key:event:submit`):
+
+```python
+result = await client.events.set_members("autumn-doubles-avon", [4873327, 4873330])
+print(result.added, result.confirmed, result.unchanged, result.removed)
+for refusal in result.refused:         # everyone else on the list was applied
+    print(refusal.member_id, refusal.reason, refusal.message)
+```
+
+A member confirmed before and missing now is cancelled; an empty list clears the roster; the
+same list again changes nothing; at most 2,000 numbers. You may list a member connected to your
+app, a player your app created, or anyone with a VAIR sign-up on that listing; a TRUSTED app may
+list any member who has not disconnected it. A member can also connect from the listing's VAIR
+page when they click Register. Anyone else comes back in `refused` with a `reason`:
+`UNKNOWN_MEMBER`, `NOT_CONNECTED` ("This member hasn't connected your app.") or `DISCONNECTED`.
+
+Read the roster back with `client.events.members(event_id)`. On your own listing a member who
+signed up on VAIR and is waiting for you reads `enrollment_status="PENDING"`; send them in your
+list to confirm them. Each row carries `source` (`PARTNER_LIST`, `VAIR_SIGNUP` or `STAFF_ADD`)
+and `lapsed`. A member who never connected your app, or who disconnected it, comes back with
+their member number and status only, so `first_name`, `last_name`,
+`is_vairified` and `is_vair_plus` can be `None` — read that as "not shared", never as "no".
+
+When a player signs up for one of your listings on VAIR, or cancels, you receive an
+`event.registration` webhook (`is_event_registration_event()`, `EventRegistrationEventData`):
+`action` is `signed_up` or `cancelled`, `source` is `player` or `staff`, and the member's
+details are included when they are connected to your app, your app is TRUSTED, or they are your
+own placeholder; otherwise you get their member number and status only. Your own list sends
+nothing back. A missed notice is
+recovered by reading the roster.
+
 ## Webhook Deliveries
 
 Inspect recent webhook delivery attempts for your app:
@@ -442,6 +540,12 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 
 ### Available scopes
 
+A connection is all or nothing. While a member is connected, your app holds every scope below,
+whatever your Connect link asked for: the `scope` you send is still validated (an unknown scope
+is refused), but the consent screen lists every member permission with Allow or Cancel, and the
+token, refresh, userinfo and member responses report every member scope. You never need to ask
+for a wider scope later; the only way to take anything back is for the member to disconnect.
+
 | Scope                | Description                                    |
 |----------------------|------------------------------------------------|
 | `user:profile:read`       | Name, location, verification status            |
@@ -450,6 +554,7 @@ async with Vairified(api_key="vair_pk_xxx") as client:
 | `user:rating:history`     | Complete rating history                        |
 | `user:match:submit`       | Submit matches on behalf of user               |
 | `user:webhook:subscribe`  | Rating change notifications                    |
+| `user:event:register`     | Be listed on your VAIR event listings; you hear about their VAIR sign-ups |
 
 ## Leaderboards
 

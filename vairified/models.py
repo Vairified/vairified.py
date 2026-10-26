@@ -252,7 +252,9 @@ class Member(BaseModel):
     status: MemberStatus
     sport: dict[str, SportRating] = Field(default_factory=dict)
     active_leagues: list[str] | None = Field(default=None, alias="activeLeagues")
+    #: The member's email, for any member connected to your app (when they have one).
     email: str | None = None
+    #: Every member scope: a connection is all or nothing.
     granted_scopes: list[str] | None = Field(default=None, alias="grantedScopes")
 
     # ---- Convenience properties ----

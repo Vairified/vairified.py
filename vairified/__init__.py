@@ -42,6 +42,7 @@ See https://vairified.github.io/vairified.py for full documentation.
 
 from vairified.client import (
     ENVIRONMENTS,
+    EventsResource,
     LeaderboardResource,
     MatchesResource,
     MembersResource,
@@ -56,6 +57,21 @@ from vairified.errors import (
     RateLimitError,
     VairifiedError,
     ValidationError,
+)
+from vairified.event_models import (
+    EventClub,
+    EventCreator,
+    EventLocation,
+    EventMember,
+    EventMembers,
+    EventRosterRefusal,
+    EventRosterResult,
+    EventsPage,
+    EventSubmission,
+    EventSubmissionLocation,
+    PartnerEvent,
+    SubmittedEvent,
+    WithdrawnEvent,
 )
 from vairified.models import (
     AttributionOutcomeEntry,
@@ -100,6 +116,8 @@ from .webhook_models import (
     EventCreatedClub,
     EventCreatedEvent,
     EventCreatedEventData,
+    EventRegistrationEvent,
+    EventRegistrationEventData,
     MemberStatusEvent,
     MemberStatusEventData,
     MemberStatusEventSport,
@@ -116,13 +134,14 @@ from .webhooks import (
     dedupe_key,
     is_connection_revoked_event,
     is_event_created_event,
+    is_event_registration_event,
     is_member_status_event,
     is_newer_sequence,
     is_rating_updated_event,
     verify_webhook,
 )
 
-__version__ = "0.8.0"
+__version__ = "0.9.0"
 
 __all__ = [
     # Version
@@ -130,6 +149,7 @@ __all__ = [
     # Client + sub-resources
     "Vairified",
     "ENVIRONMENTS",
+    "EventsResource",
     "LeaderboardResource",
     "MatchesResource",
     "MembersResource",
@@ -145,6 +165,7 @@ __all__ = [
     "is_connection_revoked_event",
     "is_rating_updated_event",
     "is_event_created_event",
+    "is_event_registration_event",
     # Webhook event models
     "MemberStatusEvent",
     "MemberStatusEventData",
@@ -157,6 +178,8 @@ __all__ = [
     "EventCreatedEvent",
     "EventCreatedEventData",
     "EventCreatedClub",
+    "EventRegistrationEvent",
+    "EventRegistrationEventData",
     "UnknownWebhookEvent",
     "VerifiedWebhookEvent",
     "WebhookEventEnvelope",
@@ -178,6 +201,20 @@ __all__ = [
     "TournamentImportResult",
     "WebhookDelivery",
     "WebhookDeliveriesResult",
+    # Partner events
+    "EventClub",
+    "EventCreator",
+    "EventLocation",
+    "EventMember",
+    "EventMembers",
+    "EventRosterRefusal",
+    "EventRosterResult",
+    "EventsPage",
+    "PartnerEvent",
+    "SubmittedEvent",
+    "WithdrawnEvent",
+    "EventSubmission",
+    "EventSubmissionLocation",
     # Request models
     "Game",
     "Match",

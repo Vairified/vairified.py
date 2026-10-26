@@ -55,6 +55,23 @@ class TestOAuthHelpers:
     def test_default_scopes_include_profile_read(self):
         assert "user:profile:read" in DEFAULT_SCOPES
 
+    def test_the_events_permission_is_a_known_scope(self):
+        """``user:event:register`` (Vairified#1320) -- asked for in a Connect link."""
+        assert validate_scope("user:event:register") is True
+        assert describe_scope("user:event:register") == (
+            "Show you as registered for this partner's events on VAIR, and tell the "
+            "partner when you sign up for or cancel one of its events on VAIR"
+        )
+        # Not requested by default: a partner asks for it when it lists events.
+        assert "user:event:register" not in DEFAULT_SCOPES
+
+    def test_the_scope_literal_and_the_catalogue_agree(self):
+        from typing import get_args
+
+        from vairified import OAuthScope
+
+        assert set(get_args(OAuthScope)) == set(SCOPES)
+
 
 class TestGetAuthorizationUrl:
     def _config(self) -> OAuthConfig:

@@ -19,6 +19,36 @@ Models
    :undoc-members:
    :show-inheritance:
 
+Events
+------
+
+.. automodule:: vairified.events
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: vairified.event_models
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+Webhooks
+--------
+
+Signature verification, and the typed events it returns -- among them
+``event.registration``, the notice a partner receives when a player signs up
+for, or cancels, one of its listings on Vairified.
+
+.. automodule:: vairified.webhooks
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: vairified.webhook_models
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 OAuth
 -----
 
